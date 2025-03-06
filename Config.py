@@ -1,0 +1,2 @@
+DEBUG_PRINTS = False
+DEBUG_IMAGES = False
