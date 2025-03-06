@@ -7,8 +7,8 @@ def enviar_Imagenes_A_GPT(folder_path):
     os.environ["OPENAI_API_KEY"] = ""
 
     client = OpenAI(
-        organization="org-oHZFTVwB9LqBmATCIuqBbMHq",
-        project="proj_jNvsFykTfzr8vTF8ULyY4rwa"
+        organization="",
+        project=""
     )
 
     # Función para codificar la imagen a Base64
