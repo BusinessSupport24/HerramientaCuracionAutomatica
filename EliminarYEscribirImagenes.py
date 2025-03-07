@@ -69,7 +69,7 @@ def eliminar_imagenes_y_agregar_llaves(pdf_bytes, folder_path):
                             current_x, current_y = e, f  # Posición de la imagen
                         
                         do_match = re.search(r'/([A-Za-z0-9]+)\s+Do', line)
-                        if do_match:
+                        if do_match and page_number != 1:
                             img_count += 1
                             imagenes_eliminadas.append((page_number, img_count, current_x, current_y))
                             text_chunks.append(f"% Imagen eliminada: {do_match.group(1)}")  # Comentario en el PDF

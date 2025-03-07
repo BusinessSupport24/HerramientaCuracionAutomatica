@@ -241,8 +241,8 @@ def show_pdfplumber_tables_with_buttons(pdf_bytes,folder_path):
         ax.clear()
         ax.axis("off")
 
-        # Obtener la imagen de la página
         page = pdf_original.pages[page_idx]  
+        # Obtener la imagen de la página
         page_image = page.to_image(resolution=72)
         pil_img = page_image.original  
         img_array = np.array(pil_img)
@@ -284,6 +284,9 @@ def show_pdfplumber_tables_with_buttons(pdf_bytes,folder_path):
         if not tables:
             if Config.DEBUG_PRINTS:
                 print("  No se han encontrado tablas en esta página.")
+        elif page_idx<2:
+            if Config.DEBUG_PRINTS:
+                print(f" Página {page_idx}, se ignora")
         else:     
             path_tablas = os.path.join(folder_path,"tablas_html")
 

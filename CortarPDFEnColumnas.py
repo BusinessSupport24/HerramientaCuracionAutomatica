@@ -38,7 +38,7 @@ def limpiar_nombre_carpeta(nombre):
 
 
 # Ruta del PDF
-pdf_path = "PTAR 1006 Tarifa especial Todo Claro DTH_WTTH_V110_0225.pdf"  # Reemplaza esto con la ruta a tu archivo PDF
+pdf_path = "PCAM 1023 Campaña HBO_MAX_NTC_TC_V62_0325.pdf"  # Reemplaza esto con la ruta a tu archivo PDF
 nombre_limpio = limpiar_nombre_carpeta(pdf_path.split(".pdf")[0])
 print(nombre_limpio)
 folder_path = f"Curacion_{nombre_limpio}"
@@ -499,7 +499,7 @@ with pdfplumber.open(pdf_path) as pdf:
 
 # process_pdf(pdf_bytes)  # Pasarlo a PyMuPDF (fitz) sin abrirlo de nuevo
 
-fig, ax = plt.subplots(figsize=(13, 9))
+fig, ax = plt.subplots(figsize=(12, 7))
 
 # Botones de navegación (abajo)
 axprev = plt.axes([0.2, 0.05, 0.1, 0.05])  # Anterior (más a la izquierda)

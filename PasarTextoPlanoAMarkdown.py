@@ -8,6 +8,57 @@ import re
 import pypandoc
 import RemplazarTablasDeMarkdown
 pypandoc.download_pandoc()
+import dateparser
+from datetime import datetime
+
+def extract_policy_data(title_text, content_text):
+    # Limpiar y unificar espacios en el título
+    title_text = re.sub(r'\s+', ' ', title_text.strip())
+    
+    # Extraer el identificador (PCAM o PTAR y su código numérico)
+    title_match = re.search(r'\b(PTAR|PCAM)\s*\d+', title_text, re.IGNORECASE)
+    title_id = title_match.group(0) if title_match else "Desconocido"
+    
+    # Limpiar y unir líneas dispersas en el contenido
+    content_text = re.sub(r'\s+', ' ', content_text.strip())
+    
+    # Diccionario para almacenar resultados
+    data = {
+        "Nombre": title_id,
+        "Emisión": "Desconocida",
+        "Versión": "Desconocida",
+        "Ciudades": "No especificadas",
+        "Fecha Vigencia": "Desconocida",
+        "Fecha Actualización": "No proporcionada"
+    }
+    
+    # Expresiones regulares para detectar campos con errores humanos
+    patterns = {
+        "Emisión": r'(?:emisi[oó]n|emision|E M I S I O N)\s*:?\s*(\d{1,2}\s*de\s*[a-zA-Z]+\s*de\s*\d{4}|\d{2}[/-]\d{2}[/-]\d{4})',
+        "Versión": r'(?:versi[oó]n|version|vrsn|vers)\s*:?\s*(\d+)',
+        "Ciudades": r'(?:ciudades)\s*:?\s*([\w_,\.\s]+)',
+        "Fecha Vigencia": r'(?:vigencia)\s*:?\s*((?:\d{1,2}\s*de\s*[a-zA-Z]+\s*de\s*\d{4}|\d{2}[/-]\d{2}[/-]\d{4}).*?(?:\d{1,2}\s*de\s*[a-zA-Z]+\s*de\s*\d{4}|\d{2}[/-]\d{2}[/-]\d{4}))'
+    }
+    
+    # Buscar los valores en el contenido
+    for key, pattern in patterns.items():
+        match = re.search(pattern, content_text, re.IGNORECASE)
+        if match:
+            data[key] = match.group(1).strip()
+    
+    # Normalizar fechas usando dateparser
+    for key in ["Emisión", "Fecha Vigencia"]:
+        if data[key] != "Desconocida":
+            parsed_date = dateparser.parse(data[key], languages=['es'])
+            if parsed_date:
+                data[key] = parsed_date.strftime("%d de %B de %Y")
+    
+    # Formatear el resultado en Markdown
+    markdown_title_output = f"# {title_text}."
+    markdown_title_content = f"**Nombre:** {data['Nombre']}\r\n\r\n\n**Emisión:** {data['Emisión']}\r\n\r\n\n**Versión:** {data['Versión']}\r\n\r\n\n**Ciudades:** {data['Ciudades']}\r\n\r\n\n**Fecha Vigencia:** {data['Fecha Vigencia']}\r\n\r\n\n**Fecha Actualización:** {data['Fecha Actualización']}\r\n\r\n\n"
+    
+    return markdown_title_output, markdown_title_content
+
 
 def convertir_pdf_a_markdown(pdf_bytes):
     pdf_bytes.seek(0)
@@ -15,20 +66,26 @@ def convertir_pdf_a_markdown(pdf_bytes):
     pdf = pdfplumber.open(pdf_copy)
 
     markdown_text = ""
+    encabezado = []
 
     for i, page in enumerate(pdf.pages):
         text = page.extract_text()
         print("--"*50)
         print("Texto extraido\n")
         print("--"*50)
-
+        
         if text:
             text = limpiar_texto(text)  # Preprocesar el texto antes de pasarlo a Pandoc
-            # markdown_text += f"\n\n### Página {i+1}\n\n"  # Agregar encabezado de página
-            markdown_text += pypandoc.convert_text(text, 'md', format='markdown')  # Convertir con Pandoc
-            print("--"*50)
-            print("Texto MD\n",markdown_text)
-            print("--"*50)
+            if i < 2:
+                encabezado.append(text)
+            if i == 1:# markdown_text += f"\n\n### Página {i+1}\n\n"  # Agregar encabezado de página
+                title,content = extract_policy_data(encabezado[0],encabezado[1])
+                markdown_text += f"{title}\r\n\n\n{content}\n\n"
+            elif i > 1:
+                markdown_text += pypandoc.convert_text(text, 'md', format='markdown')  # Convertir con Pandoc
+                print("--"*50)
+                print("Texto MD\n",markdown_text)
+                print("--"*50)
 
 
     return markdown_text
