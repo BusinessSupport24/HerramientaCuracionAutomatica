@@ -140,7 +140,7 @@ def remplazar_tablas_en_md(markdown_result,folder_path):
         if Config.DEBUG_PRINTS:
             print(llave_unica)
             print(markdown_result)
-        markdown_result = markdown_result.replace(llave_unica,f"\n\n{tabla_md}\n\n")
+        markdown_result = markdown_result.replace(llave_unica,f"\n\n{llave_unica}\n"+f"\n{tabla_md}\n\n")
     
     return markdown_result
 

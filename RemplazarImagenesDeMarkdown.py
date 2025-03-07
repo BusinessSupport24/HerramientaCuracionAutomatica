@@ -24,7 +24,7 @@ def remplazar_imagenes_en_md(markdown_result_imagenes_remplazadas,folder_path):
             # print(llave_unica)
             # print("Markdown Result\n")
             # print(markdown_result_imagenes_remplazadas)
-            markdown_result_imagenes_remplazadas = markdown_result_imagenes_remplazadas.replace(llave_unica,f"\n\n{text_imagen}\n\n")
+            markdown_result_imagenes_remplazadas = markdown_result_imagenes_remplazadas.replace(llave_unica,f"\n\n{llave_unica}\n"+f"\n{text_imagen}\n\n")
     
     with open(folder_path+r"\markdown_imagenes_remplazadas.md", 'w', encoding='utf-8') as f:
         f.write(markdown_result_imagenes_remplazadas)

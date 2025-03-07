@@ -38,14 +38,17 @@ def limpiar_nombre_carpeta(nombre):
 
 
 # Ruta del PDF
-pdf_path = "PTAR 5071 Tarifa Esp_NuevosCamposdeJuego_NTC_TC_V21_0225.pdf"  # Reemplaza esto con la ruta a tu archivo PDF
+pdf_path = "PTAR 1006 Tarifa especial Todo Claro DTH_WTTH_V110_0225.pdf"  # Reemplaza esto con la ruta a tu archivo PDF
 nombre_limpio = limpiar_nombre_carpeta(pdf_path.split(".pdf")[0])
 print(nombre_limpio)
 folder_path = f"Curacion_{nombre_limpio}"
 
 # Variables para almacenar las coordenadas
 rectangles = {
-    'Encabezado': {'coords': None, 'color': 'r'},
+    'Encabezado': {
+        'left': {'coords': None, 'color': 'r'},   # Primera mitad
+        'right': {'coords': None, 'color': 'r'}   # Segunda mitad
+    },
     'Pie de página': {'coords': None, 'color': 'g'},
     'Columna izquierda': {'coords': None, 'color': 'b'},
     'Columna derecha': {'coords': None, 'color': 'm'},
@@ -69,22 +72,24 @@ def pdfplumber_to_fitz(pdf):
     return pdf_bytes  # Retornar el PDF en memoria
 
 def check_if_encabezado_half(coords):
-    encabezado_coords = rectangles.get("Encabezado", {}).get("coords", None)
+    encabezado = rectangles.get("Encabezado", {})
+    
+    if "left" in encabezado and "right" in encabezado:
+        left_coords = encabezado["left"].get("coords")
+        right_coords = encabezado["right"].get("coords")
 
-    if not encabezado_coords:
-        return False, False, False  # No es encabezado
+        if left_coords and right_coords:
+            left, top, right, bottom = coords
 
-    e_left, e_top, e_right, e_bottom = encabezado_coords
-    middle_x = (e_left + e_right) / 2
+            is_left_half = (left_coords[0] == left and left_coords[1] == top and
+                            left_coords[2] == right and left_coords[3] == bottom)
 
-    left, top, right, bottom = coords
+            is_right_half = (right_coords[0] == left and right_coords[1] == top and
+                             right_coords[2] == right and right_coords[3] == bottom)
 
-    is_encabezado = (top == e_top and bottom == e_bottom)  # Misma altura que el encabezado
-    is_left_half = is_encabezado and (right == middle_x)  # Si el borde derecho coincide con el centro
-    is_right_half = is_encabezado and (left == middle_x)  # Si el borde izquierdo coincide con el centro
+            return True, is_left_half, is_right_half
 
-    return is_encabezado, is_left_half, is_right_half
-
+    return False, False, False  # No es encabezado
 
 # Función para recortar y agregar la región de una página al nuevo PDF
 def is_region_white(image, rect, threshold=250):
@@ -118,27 +123,39 @@ def is_pixel_in_exception(x, y, page_number, exceptions):
 def check_perimeter(image, rect, page_number, exceptions):
     """
     Verifica si el perímetro de una región en la imagen pasa por un píxel que no es blanco,
-    ignorando píxeles dentro de la excepción.
-
-    :param image: Imagen en formato NumPy.
-    :param rect: Coordenadas (left, top, right, bottom) de la región.
-    :param page_number: Número de la página actual.
-    :param exceptions: Diccionario con las excepciones de las páginas.
-    :return: True si el perímetro toca un pixel no blanco fuera de la excepción, False si todo el perímetro es blanco.
+    ignorando píxeles dentro de la excepción y excluyendo los bordes internos del encabezado 
+    si coincide exactamente con sus coordenadas.
     """
-    left, top, right, bottom = [int(i) if i >=0 else 0 for i in rect]  # Asegurar que no haya valores negativos
-    left +=1
-    top +=1
-    right -=1
-    bottom -=1
+    left, top, right, bottom = [int(i) if i >= 0 else 0 for i in rect]
+    left += 1
+    top += 1
+    right -= 1
+    bottom -= 1
 
-    is_encabezado, is_left_half, is_right_half = check_if_encabezado_half(rect)
+    # Obtener coordenadas exactas del encabezado
+    encabezado_left = rectangles.get("Encabezado", {}).get("left", {}).get("coords")
+    encabezado_right = rectangles.get("Encabezado", {}).get("right", {}).get("coords")
+
+    # Determinar si el rectángulo actual coincide con una mitad del encabezado
+    is_left_encabezado = encabezado_left is not None and rect == encabezado_left
+    is_right_encabezado = encabezado_right is not None and rect == encabezado_right
 
     # Extraer los bordes de la región
     top_row = [(x, top) for x in range(left, right)]
-    bottom_row = [(x, bottom+1) for x in range(left, right)]
-    left_col = [] if is_right_half else [(left, y) for y in range(top, bottom)]  # Omitir si es la mitad derecha
-    right_col = [] if is_left_half else [(right + 1, y) for y in range(top, bottom)]  # Omitir si es la mitad izquierda
+    bottom_row = [(x, bottom + 1) for x in range(left, right)]
+
+    # Si es el encabezado izquierdo, no verificar el borde derecho
+    left_col = [(left, y) for y in range(top, bottom)] if not is_right_encabezado else []
+
+    # Si es el encabezado derecho, no verificar el borde izquierdo
+    right_col = [(right, y) for y in range(top, bottom)] if not is_left_encabezado else []
+
+    # Debugging: Ver qué bordes están siendo excluidos
+    if Config.DEBUG_PRINTS:
+        if is_left_encabezado:
+            print(f"[DEBUG] Omitiendo borde derecho del encabezado izquierdo en {rect}")
+        if is_right_encabezado:
+            print(f"[DEBUG] Omitiendo borde izquierdo del encabezado derecho en {rect}")
 
     # Verificar cada píxel en el perímetro
     for x, y in top_row + bottom_row + left_col + right_col:
@@ -146,7 +163,7 @@ def check_perimeter(image, rect, page_number, exceptions):
             pixel_value = image[y, x]  # Obtener el valor del píxel
 
             # Si la imagen tiene múltiples canales (ej. RGB), tomar solo el primer canal (escala de grises)
-            if isinstance(pixel_value, np.ndarray):  
+            if isinstance(pixel_value, np.ndarray):
                 pixel_value = pixel_value.mean()  # Convertir a un valor único tomando el promedio
 
             if pixel_value != 255:  # Verificar si el píxel no es blanco
@@ -250,17 +267,40 @@ def draw_rectangles(ax):
                     rect = plt.Rectangle((coords[0], coords[1]), coords[2] - coords[0], coords[3] - coords[1],
                                          linewidth=2, edgecolor='orange', facecolor='none')
                     ax.add_patch(rect)
-        else:
+        elif key == 'Encabezado':
+            # Dibujar ambas mitades del encabezado
+            if 'left' in value and 'right' in value:
+                left_coords = value['left'].get('coords')
+                right_coords = value['right'].get('coords')
+
+                # Obtener el límite derecho de la figura
+                fig_xmax = ax.get_xlim()[1]
+
+                if left_coords is not None:
+                    rect_left = plt.Rectangle((left_coords[0], left_coords[1]),
+                                            left_coords[2] - left_coords[0],
+                                            left_coords[3] - left_coords[1],
+                                            linewidth=2, edgecolor='r', facecolor='none')
+                    ax.add_patch(rect_left)
+
+                if right_coords is not None:
+                    rect_right = plt.Rectangle((right_coords[0], right_coords[1]),
+                                            fig_xmax - right_coords[0],  # Extender hasta el borde de la figura
+                                            right_coords[3] - right_coords[1],
+                                            linewidth=2, edgecolor='r', facecolor='none')
+                    ax.add_patch(rect_right)
+
+                # Dibujar línea divisoria entre los dos encabezados si ambas mitades están definidas
+                if left_coords is not None and right_coords is not None:
+                    ax.plot([left_coords[2], left_coords[2]], [left_coords[1], left_coords[3]], color='b', linestyle='--')
+        
+        elif key in ['Columna izquierda', 'Columna derecha', 'Pie de página']:
             coords = value['coords']
             color = value['color']
             if coords:
                 rect = plt.Rectangle((coords[0], coords[1]), coords[2] - coords[0], coords[3] - coords[1],
                                      linewidth=2, edgecolor=color, facecolor='none')
                 ax.add_patch(rect)
-                # Dibujar línea divisoria en el encabezado
-                if key == 'Encabezado':
-                    middle_x = (coords[0] + coords[2]) / 2
-                    ax.plot([middle_x, middle_x], [coords[1], coords[3]], color='b', linestyle='--')
 
 
 # Función para mostrar la página actual
@@ -280,12 +320,56 @@ def onselect(eclick, erelease):
     x2, y2 = erelease.xdata, erelease.ydata
     coords = (min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2))
     
+    fig_xmax = ax.get_xlim()[1]  # Límite derecho de la figura en Matplotlib
+    fig_ymin = ax.get_ylim()[0]  # Límite inferior de la figura (parte más baja)
+
     if current_selector_key == 'Excepción':
         rectangles['Excepción'][current_page_index] = coords  # Guardar por página
+
+    elif current_selector_key == 'Encabezado':
+        # Obtener el ancho total del PDF
+        # pdf_width = pdf.pages[current_page_index].width  # Ancho real del PDF
+
+
+        # Definir la primera mitad (como lo dibujó el usuario)
+        left_rect = (coords[0], coords[1], coords[2], coords[3])
+
+        # Definir la segunda mitad (desde el borde derecho del primero hasta el ancho total del PDF)
+        right_rect = (coords[2], coords[1], fig_xmax, coords[3])
+
+        # Almacenar las coordenadas en la estructura correcta
+        rectangles['Encabezado']['left']['coords'] = left_rect
+        rectangles['Encabezado']['right']['coords'] = right_rect
+
+        if Config.DEBUG_PRINTS:
+            print(f"Encabezado dividido en dos mitades: \n"
+                  f"Izquierda: {rectangles['Encabezado']['left']['coords']} \n"
+                  f"Derecha: {rectangles['Encabezado']['right']['coords']}")
+            
+    elif current_selector_key == 'Columna izquierda':
+        # Definir la columna izquierda (como lo dibujó el usuario)
+        left_col_rect = (coords[0], coords[1], coords[2], coords[3])
+
+        # Definir la columna derecha con la misma altura que la izquierda
+        right_col_rect = (coords[2], coords[1], fig_xmax, coords[3])
+
+        # Definir el pie de página (desde el límite inferior de la columna hasta el fondo de la figura)
+        footer_rect = (ax.get_xlim()[0], coords[3], fig_xmax, fig_ymin)
+
+        rectangles['Columna izquierda']['coords'] = left_col_rect
+        rectangles['Columna derecha']['coords'] = right_col_rect
+        rectangles['Pie de página']['coords'] = footer_rect
+
+        if Config.DEBUG_PRINTS:
+            print(f"Columna izquierda definida en: {left_col_rect}")
+            print(f"Columna derecha generada automáticamente en: {right_col_rect}")
+            print(f"Pie de página generado automáticamente en: {footer_rect}")
+
     else:
         rectangles[current_selector_key]['coords'] = coords
-    if Config.DEBUG_PRINTS:
-        print(f"{current_selector_key} definido en: {coords}")
+        if Config.DEBUG_PRINTS:
+            print(f"{current_selector_key} definido en: {coords}")
+
     show_page()
 
 # Función para cambiar directamente entre áreas
@@ -316,7 +400,15 @@ def confirm_and_process(pdf_bytes,event = None):
     # Reiniciar el estado de `perimeter_issue_detected` antes de procesar
     perimeter_issue_detected = False  
 
-    if all(rect.get('coords') is not None for key, rect in rectangles.items() if key != 'Excepción'):
+    # Nueva validación para el encabezado
+    encabezado_definido = ('left' in rectangles['Encabezado'] and 'right' in rectangles['Encabezado'] and
+                           rectangles['Encabezado']['left'].get('coords') is not None and
+                           rectangles['Encabezado']['right'].get('coords') is not None)
+
+    # Modificar validación para verificar `left` y `right` del encabezado
+    if (encabezado_definido and
+        all(rect.get('coords') is not None for key, rect in rectangles.items() if key not in ['Encabezado', 'Excepción'])):
+        
         process_pdf(pdf_bytes)
         if Config.DEBUG_PRINTS:
             print(f"[DEBUG] Valor de `perimeter_issue_detected` después de `process_pdf()`: {perimeter_issue_detected}")
@@ -339,10 +431,21 @@ def confirm_and_process(pdf_bytes,event = None):
 def process_pdf(pdf_bytes):
     new_doc = fitz.open()  # Documento de destino
     original_pdf = fitz.open(stream=pdf_bytes, filetype="pdf")  # Abrir desde memoria
-    e_left, e_top, e_right, e_bottom = rectangles['Encabezado']['coords']
-    middle_x = (e_left + e_right) / 2
-    crop_and_add_to_pdf(0, (e_left, e_top, middle_x, e_bottom),pdf_bytes)
-    crop_and_add_to_pdf(0, (middle_x, e_top, e_right, e_bottom),pdf_bytes)
+
+    # Verificar si el encabezado está definido con ambas mitades y sus coordenadas son válidas
+    if ('left' in rectangles['Encabezado'] and 'right' in rectangles['Encabezado'] and
+        rectangles['Encabezado']['left']['coords'] is not None and
+        rectangles['Encabezado']['right']['coords'] is not None):
+
+        left_coords = rectangles['Encabezado']['left']['coords']
+        right_coords = rectangles['Encabezado']['right']['coords']
+
+        # Enviar ambas mitades a crop_and_add_to_pdf()
+        crop_and_add_to_pdf(0, left_coords, pdf_bytes)
+        crop_and_add_to_pdf(0, right_coords, pdf_bytes)
+
+    else:
+        print("[ERROR] El encabezado no está completamente definido o sus coordenadas son inválidas.")
 
     for page_number in range(len(original_pdf)):
         if page_number in rectangles['Excepción']:
