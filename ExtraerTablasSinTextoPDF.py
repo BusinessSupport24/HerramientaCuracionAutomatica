@@ -284,7 +284,7 @@ def show_pdfplumber_tables_with_buttons(pdf_bytes,folder_path):
         if not tables:
             if Config.DEBUG_PRINTS:
                 print("  No se han encontrado tablas en esta página.")
-        elif page_idx<2:
+        elif Config.MOVIL == False and page_idx<2:
             if Config.DEBUG_PRINTS:
                 print(f" Página {page_idx}, se ignora")
         else:     
@@ -426,9 +426,9 @@ def show_pdfplumber_tables_with_buttons(pdf_bytes,folder_path):
                     if Config.DEBUG_PRINTS:
                         print("NUEVA ESTRUCTURA GENERADA\n",nueva_estructura_tabla)
                     RtHTML.guardar_tabla(nueva_estructura_tabla,tabla_actual,folder_path,path_tablas)
-                    if Config.DEBUG_PRINTS:
+                    # if Config.DEBUG_PRINTS:
                         # input("Presione Enter para continuar")
-                        RtHTML.mostrar_html_pyqt(nueva_estructura_tabla, tabla_actual)
+                        # RtHTML.mostrar_html_pyqt(nueva_estructura_tabla, tabla_actual)
                     lista_tablas.append(tabla_generada)
                     crop_data.append((page_idx, (table_idx, x0-3, top-4, x1+6, bottom+4)))
 
@@ -443,8 +443,8 @@ def show_pdfplumber_tables_with_buttons(pdf_bytes,folder_path):
         ax.set_xlim([0, page.width])
         ax.set_ylim([page.height, 0])
         ax.set_title(f"Página {page_idx + 1} / {total_pages}")
-        if not Config.DEBUG_PRINTS:
-            next_page(0)#> COMENTAR PARA DEBUG
+        
+        next_page(0)#> COMENTAR PARA DEBUG
         # if Config.DEBUG_PRINTS:
         # plt.close("all")
         plt.draw()
@@ -462,12 +462,13 @@ def show_pdfplumber_tables_with_buttons(pdf_bytes,folder_path):
                 pdf_bytes_llaves_tabla_escrita = EYELDT.eliminar_elementos_area(crop_data, pdf_bytes, folder_path)
                 crop_data.clear()
                 print("TABLAS OBTENIDAS CON EXITO.")
-                print("INICIANDO LA OBTENCION DE IMAGENES.")
-                Extraer_Imagenes.extraer_imagenes(pdf_bytes_llaves_tabla_escrita,folder_path)
-                pdf_bytes_llaves_tabla_imagenes = EliminarYEscribirImagenes.eliminar_imagenes_y_agregar_llaves(pdf_bytes_llaves_tabla_escrita,folder_path)
-                string_tablas_remplazadas = PasarTextoPlanoAMarkdown.main(pdf_bytes_llaves_tabla_imagenes,folder_path)
-                EnviarImagenesAChatGPT.enviar_Imagenes_A_GPT(folder_path+r"\imagenes_extraidas")
-                RemplazarImagenesDeMarkdown.remplazar_imagenes_en_md(string_tablas_remplazadas,folder_path)
+            print("INICIANDO LA OBTENCION DE IMAGENES.")
+            Extraer_Imagenes.extraer_imagenes(pdf_bytes_llaves_tabla_escrita,folder_path)
+            pdf_bytes_llaves_tabla_imagenes = EliminarYEscribirImagenes.eliminar_imagenes_y_agregar_llaves(pdf_bytes_llaves_tabla_escrita,folder_path)
+            string_tablas_remplazadas = PasarTextoPlanoAMarkdown.main(pdf_bytes_llaves_tabla_imagenes,folder_path)
+            EnviarImagenesAChatGPT.enviar_Imagenes_A_GPT(folder_path+r"\imagenes_extraidas")
+            RemplazarImagenesDeMarkdown.remplazar_imagenes_en_md(string_tablas_remplazadas,folder_path)
+            print("PROCESO TERMINADO!")
 
     def prev_page(event):
         nonlocal current_page_idx
@@ -484,7 +485,8 @@ def show_pdfplumber_tables_with_buttons(pdf_bytes,folder_path):
     btn_next.on_clicked(next_page)
 
     display_page(current_page_idx)
-    plt.show()
+    # if not Config.DEBUG_PRINTS:
+    #     plt.show()
     # RtHTML.mostrar_html_todas_las_tablas(lista_tablas)
     pdf_original.close()
     pdf_sin_texto.close()

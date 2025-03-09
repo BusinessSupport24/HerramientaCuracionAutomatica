@@ -1,2 +1,3 @@
-DEBUG_PRINTS = False
+DEBUG_PRINTS = True
 DEBUG_IMAGES = False
+MOVIL = False

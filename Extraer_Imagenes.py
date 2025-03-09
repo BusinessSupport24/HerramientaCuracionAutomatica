@@ -64,7 +64,7 @@ def extraer_imagenes(pdf_bytes,folder_path):
                 else:
                     # Si no hay máscara, guardar la imagen base directamente
                     with Image.open(io.BytesIO(image_bytes)) as base_img:
-                        image_filename = f"pagina_{page_number + 1}_imagen_{image_index}.jpg"
+                        image_filename = f"Imagen_{page_number + 1}_{image_index}.jpg"
                         image_path = os.path.join(output_folder, image_filename)
                         if base_img.mode == "RGBA":
                             background = Image.new("RGB", base_img.size, (255, 255, 255))

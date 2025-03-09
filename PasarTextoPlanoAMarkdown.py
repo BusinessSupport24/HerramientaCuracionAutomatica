@@ -11,6 +11,63 @@ pypandoc.download_pandoc()
 import dateparser
 from datetime import datetime
 
+def extract_header_data(content_text):
+    # Limpiar y unificar espacios y saltos de línea en el contenido
+    content_text = re.sub(r'\s+', ' ', content_text.strip())
+    
+    # Diccionario para almacenar resultados
+    data = {
+        "Nombre": "Desconocido",
+        "Para": "No especificado",
+        "De": "No especificado",
+        "Asunto": "No especificado",
+        "Fecha Vigencia": "Desconocida",
+        "Fecha Actualización": "No proporcionada"
+    }
+    
+    # Extraer y eliminar "Para"
+    match = re.search(r'(?i)para\s*:?\s*(.*?)(?:\.|$)', content_text)
+    if match:
+        data["Para"] = match.group(1).strip()
+        content_text = content_text.replace(match.group(0), '', 1)
+    
+    # Extraer y eliminar "De"
+    match = re.search(r'(?i)de\s*:?\s*(.*?)(?:\.|$)', content_text)
+    if match:
+        data["De"] = match.group(1).strip()
+        content_text = content_text.replace(match.group(0), '', 1)
+    
+    # Extraer y eliminar "Asunto" hasta el primer salto de línea o "Fecha"
+    match = re.search(r'(?i)asunto\s*:?\s*(.*?)(?=(?:fecha|$))', content_text)
+    if match:
+        data["Asunto"] = match.group(1).strip()
+        content_text = content_text.replace(match.group(0), '', 1)
+    
+    # El título será el mismo valor que el Asunto
+    data["Nombre"] = data["Asunto"]
+    
+    # Extraer y eliminar "Fecha Vigencia"
+    match = re.search(r'(?i)(?:fecha\s+oferta\s+v[aá]lida|fecha vigencia)\s*:?\s*(.*?)(?:\.|$)', content_text)
+    if match:
+        data["Fecha Vigencia"] = match.group(1).strip()
+        content_text = content_text.replace(match.group(0), '', 1)
+    
+    # Normalizar fechas usando dateparser
+    if data["Fecha Vigencia"] != "Desconocida":
+        date_matches = re.findall(r'\d{1,2}\s*de\s*[a-zA-Z]+\s*de\s*\d{4}', data["Fecha Vigencia"])
+        if date_matches and len(date_matches) == 2:
+            formatted_dates = [dateparser.parse(date, languages=['es']).strftime("%d de %B de %Y") for date in date_matches]
+            data["Fecha Vigencia"] = f"{formatted_dates[0]} al {formatted_dates[1]}"
+    
+            
+    # Formatear el resultado en Markdown
+    markdown_title = f"# {data['Nombre']}."
+    markdown_content = f"**Nombre:** {data['Nombre']}\r\n\r\n**Para:** {data['Para']}\r\n\r\n**De:** {data['De']}\r\n\r\n**Asunto:** {data['Asunto']}\r\n\r\n**Fecha Vigencia:** {data['Fecha Vigencia']}\r\n\r\n**Fecha Actualización:** {data['Fecha Actualización']}\r\n\r\n"
+    
+    return markdown_title, markdown_content
+
+
+
 def extract_policy_data(title_text, content_text):
     # Limpiar y unificar espacios en el título
     title_text = re.sub(r'\s+', ' ', title_text.strip())
@@ -76,12 +133,22 @@ def convertir_pdf_a_markdown(pdf_bytes):
         
         if text:
             text = limpiar_texto(text)  # Preprocesar el texto antes de pasarlo a Pandoc
-            if i < 2:
-                encabezado.append(text)
-            if i == 1:# markdown_text += f"\n\n### Página {i+1}\n\n"  # Agregar encabezado de página
-                title,content = extract_policy_data(encabezado[0],encabezado[1])
-                markdown_text += f"{title}\r\n\n\n{content}\n\n"
-            elif i > 1:
+            if not Config.MOVIL:
+                if i < 2:
+                    encabezado.append(text)
+                if i == 1:# markdown_text += f"\n\n### Página {i+1}\n\n"  # Agregar encabezado de página
+                    title,content = extract_policy_data(encabezado[0],encabezado[1])
+                    markdown_text += f"{title}\r\n\n\n{content}\n\n"
+            else:
+                if i == 0:# markdown_text += f"\n\n### Página {i+1}\n\n"  # Agregar encabezado de página
+                    print(text)
+                    title, content = extract_header_data(text)
+                    # title,content = extract_policy_data(text,encabezado[0])
+                    markdown_text += f"{title}\r\n\n\n{content}\n\n"
+                elif i==1:
+                    markdown_text += pypandoc.convert_text(text, 'md', format='markdown')  # Convertir con Pandoc
+                
+            if i > 1:
                 markdown_text += pypandoc.convert_text(text, 'md', format='markdown')  # Convertir con Pandoc
                 print("--"*50)
                 print("Texto MD\n",markdown_text)
