@@ -13,7 +13,7 @@ def elemento_en_area(x, y, area):
     return not (ax1 <= x <= ax2 and ay1 <= y <= ay2)
 
 
-def filtrar_contenido(decoded_data, area_interes, primera_pagina,page_number):
+def filtrar_contenido(decoded_data, area_interes, primera_pagina,page_number,page):
     """
     Filtra el contenido del flujo de la página eliminando texto y vectores dentro del área de interés.
     """
@@ -37,6 +37,27 @@ def filtrar_contenido(decoded_data, area_interes, primera_pagina,page_number):
     # if page_number == 0 and Config.DEBUG_PRINTS:
     #     print("Lineas",lines)
     #     # print(lines)
+
+    # def extraer_xobjects(page):
+    #     """Extrae y decodifica el contenido de los XObjects encontrados en la página."""
+    #     xobjects_contenido = []
+    #     if "/Resources" in page and "/XObject" in page["/Resources"]:
+    #         xobjects = page["/Resources"]["/XObject"]
+    #         print("XObjects detectados en la página:", list(xobjects.keys()))
+    #         for xobj_name in list(xobjects):
+    #             xobj = xobjects[xobj_name]
+    #             if isinstance(xobj, pikepdf.Stream):
+    #                 try:
+    #                     contenido_xobj = xobj.read_bytes().decode("latin1", errors="ignore")
+    #                     print(f"Contenido decodificado de XObject {xobj_name}:")
+    #                     print(contenido_xobj[:10000])  # Imprime una parte del contenido del XObject
+    #                     xobjects_contenido.extend(contenido_xobj.split("\n"))
+    #                 except pikepdf.PdfError:
+    #                     print(f"No se pudo leer el contenido de XObject {xobj_name}, posiblemente está codificado.")
+    #     return xobjects_contenido
+
+    # # Extraer y agregar contenido de XObjects antes de procesar las líneas de la página
+    # lines = extraer_xobjects(page) + lines
 
     for line in lines:
         # line = lines[i]
@@ -222,7 +243,7 @@ def eliminar_elementos_area(crop_data, pdf_bytes,folder_path):
                                 continue
 
                         # **Filtrar SOLO el área de interés de esta copia**
-                        new_content = filtrar_contenido(decoded_data, area_interes_pdf, primera_pagina,page_number)
+                        new_content = filtrar_contenido(decoded_data, area_interes_pdf, primera_pagina,page_number, page_copy)
 
                         if primera_pagina == 0:
                             primera_pagina = None

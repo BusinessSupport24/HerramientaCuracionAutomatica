@@ -1,6 +1,19 @@
 import cv2
 import numpy as np
 import Config
+import RenderizarTablaHTML
+
+def mostrar_imagen_redimensionada(name_image, image, max_ancho=1600, max_alto=900):
+    """Muestra la imagen redimensionada si excede el tamaño máximo, manteniendo la relación de aspecto."""
+    alto_original, ancho_original = image.shape[:2]
+    escala = min(max_ancho / ancho_original, max_alto / alto_original)
+    
+    if escala < 1:
+        nuevo_ancho = int(ancho_original * escala)
+        nuevo_alto = int(alto_original * escala)
+        image = cv2.resize(image, (nuevo_ancho, nuevo_alto), interpolation=cv2.INTER_AREA)
+    
+    cv2.imshow(name_image, image)
 
 def generar_malla(coordenadas_celdas, imagen_width, imagen_height):
     """Genera una malla basada en las coordenadas de las celdas y la dibuja en una imagen en blanco."""
@@ -14,8 +27,8 @@ def generar_malla(coordenadas_celdas, imagen_width, imagen_height):
     min_altura = min(alturas) if alturas else 10  # Evitar división por cero
 
     # Definir umbrales de agrupación
-    umbral_x = min_anchura / 2
-    umbral_y = min_altura / 2
+    umbral_x = min_anchura / 1.5
+    umbral_y = min_altura / 1.5
 
     # Obtener todas las coordenadas únicas en X e Y
     coordenadas_x = sorted(set(x for _, x, _, _, _ in coordenadas_celdas))
@@ -53,6 +66,9 @@ def generar_malla(coordenadas_celdas, imagen_width, imagen_height):
     for y in lineas_y:
         cv2.line(imagen_malla, (0, y), (imagen_width, y), (0, 0, 0), 1)
 
+    if Config.DEBUG_IMAGES:
+        mostrar_imagen_redimensionada("malla creada",imagen_malla)
+
     # Mostrar la imagen con la malla generada
     # if Config.DEBUG_IMAGES:
     #   cv2.imshow("Malla Generada", imagen_malla)
@@ -64,7 +80,7 @@ def generar_malla(coordenadas_celdas, imagen_width, imagen_height):
 
 
 
-def generar_estructura_tabla(coordenadas_celdas, cuadricula, max_filas, max_columnas, imagen_width, imagen_height, umbral_x, umbral_y):
+def generar_estructura_tabla(coordenadas_celdas, cuadricula, max_filas, max_columnas, imagen_width, imagen_height, umbral_x, umbral_y,tabla_actual):
     """
     Genera la estructura de la tabla con rowspan y colspan, identificando las celdas fusionadas con un umbral de tolerancia.
     También dibuja la tabla final con las celdas fusionadas detectadas.
@@ -72,6 +88,9 @@ def generar_estructura_tabla(coordenadas_celdas, cuadricula, max_filas, max_colu
 
     # Inicializar la tabla con valores vacíos
     tabla = [[{"contenido": "", "rowspan": 1, "colspan": 1} for _ in range(max_columnas)] for _ in range(max_filas)]
+    
+    if Config.DEBUG_IMAGES:
+        RenderizarTablaHTML.mostrar_html_pyqt(tabla,"malla html"+tabla_actual)
     
     # Convertir lista de coordenadas de celdas originales en un conjunto para búsqueda rápida con umbral
     def esta_dentro_de_celdas_originales(x, y):
@@ -155,6 +174,107 @@ def generar_estructura_tabla(coordenadas_celdas, cuadricula, max_filas, max_colu
     #   cv2.imshow("Tabla Detectada con Celdas Fusionadas", imagen_tabla)
     # cv2.waitKey(0)
     # cv2.destroyAllWindows()
+
+    return tabla
+
+def generar_estructura_tabla_new(coordenadas_celdas, cuadricula, max_filas, max_columnas, imagen_width, imagen_height, tabla_actual):
+    """
+    Genera la estructura de la tabla a partir de la cuadricula y las celdas detectadas.
+    Para cada celda de la cuadricula se asigna el ID de la celda detectada (obtenido al 
+    verificar en qué bounding box cae el centro de la celda de la cuadricula). Posteriormente,
+    se fusionan (con rowspan y colspan) aquellas celdas contiguas que tengan el mismo ID.
+    
+    Parámetros:
+      - coordenadas_celdas: lista de tuplas (id_celda, x, y, w, h) de las celdas detectadas.
+      - cuadricula: matriz (lista de listas) de diccionarios con las claves "x", "y", "w" y "h".
+      - max_filas, max_columnas: dimensiones de la cuadricula.
+      - imagen_width, imagen_height: dimensiones de la imagen original.
+      - tabla_actual: (opcional) cadena o identificador para visualización o debugging.
+      
+    Retorna:
+      - tabla: estructura (matriz) donde cada celda es un diccionario con:
+          "id": ID asignado de la celda detectada,
+          "rowspan": número de filas fusionadas,
+          "colspan": número de columnas fusionadas,
+          "centro": coordenadas del centro de la celda fusionada.
+    """
+
+    # Función para obtener el ID de la celda detectada según el centro (center_x, center_y)
+    def obtener_id_celda(center_x, center_y):
+        for id_celda, x, y, w, h in coordenadas_celdas:
+            # Verificar si el centro cae dentro del bounding box de la celda detectada
+            if center_x >= x and center_x <= x + w and center_y >= y and center_y <= y + h:
+                return id_celda
+        return None
+
+    # Crear una estructura inicial para la tabla a partir de la cuadricula.
+    # Se asigna a cada celda el ID detectado según el centro de la celda de la cuadricula.
+    tabla = [[None for _ in range(max_columnas)] for _ in range(max_filas)]
+    for i in range(max_filas):
+        for j in range(max_columnas):
+            celda = cuadricula[i][j]
+            center_x = celda["x"] + celda["w"] / 2
+            center_y = celda["y"] + celda["h"] / 2
+            detected_id = obtener_id_celda(center_x, center_y)
+            tabla[i][j] = {
+                "id_celda": detected_id,
+                "contenido": f"Celda ({i},{j})",
+                "rowspan": 1,
+                "colspan": 1,
+                "centro": (center_x, center_y)
+            }
+
+    # Fusionar celdas contiguas que tengan el mismo ID (para generar rowspan y colspan)
+    celdas_asignadas = set()
+    for i in range(max_filas):
+        for j in range(max_columnas):
+            if (i, j) in celdas_asignadas:
+                continue
+
+            current_id = tabla[i][j]["id_celda"]
+            if current_id is None:
+                continue
+
+            # Expandir horizontalmente (calcular colspan)
+            colspan = 1
+            while j + colspan < max_columnas and tabla[i][j + colspan]["id_celda"] == current_id:
+                celdas_asignadas.add((i, j + colspan))
+                colspan += 1
+
+            # Expandir verticalmente (calcular rowspan)
+            rowspan = 1
+            vertical_fusion_possible = True
+            while i + rowspan < max_filas and vertical_fusion_possible:
+                for col in range(j, j + colspan):
+                    if tabla[i + rowspan][col]["id_celda"] != current_id:
+                        vertical_fusion_possible = False
+                        break
+                if vertical_fusion_possible:
+                    for col in range(j, j + colspan):
+                        celdas_asignadas.add((i + rowspan, col))
+                    rowspan += 1
+
+            # Asignar en la celda principal los valores de la fusión
+            tabla[i][j]["rowspan"] = rowspan
+            tabla[i][j]["colspan"] = colspan
+
+            # Marcar las celdas fusionadas (excepto la principal) con rowspan=0 y colspan=0
+            for r in range(i, i + rowspan):
+                for c in range(j, j + colspan):
+                    if r == i and c == j:
+                        continue
+                    tabla[r][c] = {
+                        "id_celda": current_id,
+                        "contenido": "",
+                        "rowspan": 0,
+                        "colspan": 0,
+                        "centro": tabla[i][j]["centro"]
+                    }
+
+    # (Opcional) Visualización o renderización de la tabla HTML usando tabla_actual, si es requerido.
+    # Por ejemplo:
+    # if Config.DEBUG_IMAGES:
+    #     RenderizarTablaHTML.mostrar_html_pyqt(tabla, "Tabla HTML " + tabla_actual)
 
     return tabla
 

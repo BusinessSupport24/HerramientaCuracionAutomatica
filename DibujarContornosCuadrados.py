@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 import Config
 
-def mostrar_imagen_redimensionada(name_image, image, max_ancho=1920, max_alto=1080):
+def mostrar_imagen_redimensionada(name_image, image, max_ancho=1280, max_alto=720):
     """Muestra la imagen redimensionada si excede el tamaño máximo, manteniendo la relación de aspecto."""
     alto_original, ancho_original = image.shape[:2]
     escala = min(max_ancho / ancho_original, max_alto / alto_original)
@@ -147,7 +147,7 @@ def cargar_imagen(image):
     contours, hierarchy = cv2.findContours(binary, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
     
     alto, ancho = image.shape
-    area_min = (alto * ancho) / 900
+    area_min = (alto * ancho) / 2000
     
     hierarchy = hierarchy[0] if hierarchy is not None else []
 

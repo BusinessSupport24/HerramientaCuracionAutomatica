@@ -25,14 +25,62 @@ import RemplazarImagenesDeMarkdown
 # ============================
 # 1. FUNCION PARA ELIMINAR TEXTO DEL PDF
 # ============================
-def eliminar_texto_preciso(pdf_bytes, output_path, altura_pagina):
-    """Genera un nuevo PDF sin texto en la parte superior."""
+def eliminar_texto_preciso(pdf_bytes, output_path):
+    """
+    Genera un nuevo PDF eliminando completamente todo el texto en cada página,
+    incluyendo texto dentro de XObjects y Form XObjects.
+    """
     pdf_bytes.seek(0)
-
-    # Cargar el PDF original
     pdf = pikepdf.open(pdf_bytes)
 
-    for page in pdf.pages:
+    # Expresiones regulares mejoradas
+    patron_texto = re.compile(r'\((.*?)\)\s*Tj|\[(.*?)\]\s*TJ')  # Captura texto en Tj y TJ
+    patron_tm_td = re.compile(r'([-0-9.]+)\s+([-0-9.]+)\s+Td|([-0-9.]+)\s+([-0-9.]+)\s+Tm')
+
+    def procesar_contenido(contenido):
+        """Elimina texto de un contenido decodificado."""
+        current_x, current_y = 0, 0
+        nuevas_lineas = []
+
+        print("Contenido decodificado de la página:")
+        print(contenido[:100000])  # Imprime una parte del contenido para inspección
+
+        for line in contenido.split("\n"):
+            # Detectar matrices de transformación (Tm) y desplazamientos de texto (Td)
+            tm_td_match = patron_tm_td.search(line)
+            if tm_td_match:
+                x_pos = float(tm_td_match.group(1) or tm_td_match.group(3) or 0)
+                y_pos = float(tm_td_match.group(2) or tm_td_match.group(4) or 0)
+                current_x, current_y = x_pos, y_pos
+
+            # Eliminar texto en Tj y TJ
+            line = re.sub(patron_texto, "", line)
+            nuevas_lineas.append(line)
+
+        return "\n".join(nuevas_lineas).encode("latin1")
+
+    def procesar_xobjects(page):
+        """Verifica y elimina texto dentro de XObjects y Form XObjects."""
+        if "/Resources" in page and "/XObject" in page["/Resources"]:
+            xobjects = page["/Resources"]["/XObject"]
+            print("XObjects detectados en la página:", list(xobjects.keys()))
+            for xobj_name in list(xobjects):
+                xobj = xobjects[xobj_name]
+                if isinstance(xobj, pikepdf.Stream):
+                    try:
+                        contenido_xobj = xobj.read_bytes()  # Usar read_bytes en lugar de decode
+                        contenido_xobj = contenido_xobj.decode("latin1", errors="ignore")
+                        print(f"Contenido decodificado de XObject {xobj_name}:")
+                        print(contenido_xobj[:100000])  # Imprime una parte del contenido del XObject
+                        nuevo_contenido_xobj = procesar_contenido(contenido_xobj)
+                        xobj.write(nuevo_contenido_xobj)
+                    except pikepdf.PdfError:
+                        print(f"No se pudo leer el contenido de XObject {xobj_name}, posiblemente está codificado.")
+
+    for i, page in enumerate(pdf.pages):
+        if Config.DEBUG_PRINTS:
+            print(f"Pagina {i+1}")
+            # plt.waitforbuttonpress()
         if "/Contents" not in page:
             continue  # Saltar páginas sin contenido
 
@@ -43,33 +91,7 @@ def eliminar_texto_preciso(pdf_bytes, output_path, altura_pagina):
             contenido_completo = contenido_obj.read_bytes()
 
         contenido_decodificado = contenido_completo.decode("latin1", errors="ignore")
-
-        # Expresión regular para encontrar comandos de texto en el PDF
-        patron_texto = re.compile(r"\((.*?)\)\s*Tj|\[(.*?)\]\s*TJ")
-        patron_coordenadas = re.compile(r"([\d\.\-]+) ([\d\.\-]+) Td|([\d\.\-]+) ([\d\.\-]+) Tm")
-
-        lineas_modificadas = []
-        eliminar_siguiente_texto = False  
-
-        for line in contenido_decodificado.split("\n"):
-            match = patron_coordenadas.search(line)
-            if match:
-                try:
-                    y_pos = float(match.group(2) or match.group(4))  
-
-                    if y_pos > (altura_pagina * (0/3)):  
-                        eliminar_siguiente_texto = True
-                    else:
-                        eliminar_siguiente_texto = False
-                except ValueError:
-                    pass
-
-            if eliminar_siguiente_texto:
-                line = re.sub(patron_texto, "", line)
-
-            lineas_modificadas.append(line)
-
-        nuevo_contenido = "\n".join(lineas_modificadas).encode("latin1")
+        nuevo_contenido = procesar_contenido(contenido_decodificado)
 
         if isinstance(contenido_obj, pikepdf.Array):
             for obj in contenido_obj:
@@ -77,13 +99,15 @@ def eliminar_texto_preciso(pdf_bytes, output_path, altura_pagina):
         else:
             contenido_obj.write(nuevo_contenido)
 
+        # Procesar XObjects dentro de la página
+        procesar_xobjects(page)
+
     pdf.save(output_path)
     pdf_bytes_sin_texto = io.BytesIO()
     pdf.save(pdf_bytes_sin_texto)
-    pdf_bytes_sin_texto.seek(0)  # Volver al inicio del buffer}
-    if Config.DEBUG_PRINTS:
-        print(f"PDF sin texto guardado en: {output_path}")
+    pdf_bytes_sin_texto.seek(0)  # Volver al inicio del buffer
     return pdf_bytes_sin_texto
+
 
 # ============================
 # 2. FUNCION PARA RECORTAR TABLAS Y GUARDAR COMO IMAGEN DE ALTA CALIDAD
@@ -200,21 +224,107 @@ def asignar_texto_a_estructura(tabla_estructura, coordenadas_celdas_convertidas,
                     celda["id_celda"] = None  # Asignar un valor nulo para evitar errores
                 id_celda = celda["id_celda"]
                 celda["contenido"] = contenido_por_celda.get(id_celda, "")
-
+    
+    # if Config.DEBUG_PRINTS:
+    #     plt.waitforbuttonpress()
     return tabla_estructura  # Retornar la estructura modificada
+
+def asignar_texto_a_estructura_new(tabla_estructura, coordenadas_celdas_convertidas, palabras_pdf):
+    """
+    Asigna el contenido (palabras y sus coordenadas) a cada celda en la estructura de la tabla,
+    verificando si el centro de cada palabra se encuentra dentro de los límites de la celda.
+    
+    Parámetros:
+        tabla_estructura (list): Lista de listas que representa la estructura de la tabla. 
+                                 Cada celda debe tener un "id_celda" y otros atributos.
+        coordenadas_celdas_convertidas (list): Lista de tuplas (id_celda, x_original, y_original, w_original, h_original)
+                                               correspondientes a cada celda.
+        palabras_pdf (list): Lista de diccionarios, cada uno representando una palabra extraída del PDF,
+                             con las claves 'text', 'x0', 'x1', 'top' y 'bottom'.
+    
+    Retorna:
+        list: La estructura de la tabla actualizada, donde en cada celda se asigna:
+              - "texto": cadena resultante de concatenar las palabras (en orden de lectura: de arriba a abajo y de izquierda a derecha)
+              - "detalles": lista de tuplas (y_center, x_center, palabra) con los detalles de cada palabra asignada.
+    """
+    # Inicializar un diccionario para almacenar las palabras asignadas a cada celda
+    contenido_por_celda = { id_celda: [] for id_celda, _, _, _, _ in coordenadas_celdas_convertidas }
+    
+    # Recorrer cada palabra extraída del PDF
+    for w in palabras_pdf:
+        # Calcular el centro de la palabra
+        x_center = (w['x0'] + w['x1']) / 2
+        y_center = (w['top'] + w['bottom']) / 2
+        texto = w['text']
+        
+        # Buscar la celda en la que se encuentra la palabra
+        for id_celda, x_original, y_original, w_original, h_original in coordenadas_celdas_convertidas:
+            x_min, x_max = x_original, x_original + w_original
+            y_min, y_max = y_original, y_original + h_original
+            
+            if x_min <= x_center <= x_max and y_min <= y_center <= y_max:
+                contenido_por_celda[id_celda].append((y_center, x_center, texto))
+                break  # Se encontró la celda correspondiente, se sale del bucle interno
+    
+    # Ordenar las palabras de cada celda según el orden de lectura:
+    # Primero por la coordenada Y (de arriba a abajo) y luego por X (de izquierda a derecha)
+    for id_celda in contenido_por_celda:
+        # Ordenar las palabras de cada celda: primero por "y" y luego por "x"
+        contenido_por_celda[id_celda].sort(key=lambda t: (t[0], t[1]))
+        
+        # Definir una tolerancia para considerar que dos palabras están en la misma línea
+        tolerancia = 5 
+        grupos = []  # Aquí almacenaremos los grupos (líneas)
+        grupo_actual = []
+        
+        # Recorrer la lista de palabras ya ordenada
+        for (y, x, palabra) in contenido_por_celda[id_celda]:
+            if not grupo_actual:
+                grupo_actual.append((y, x, palabra))
+            else:
+                # Si la diferencia en "y" con la última palabra del grupo es menor o igual a la tolerancia,
+                # consideramos que pertenece a la misma línea.
+                if abs(y - grupo_actual[-1][0]) <= tolerancia:
+                    grupo_actual.append((y, x, palabra))
+                else:
+                    # Se termina el grupo actual y se inicia uno nuevo
+                    grupos.append(grupo_actual)
+                    grupo_actual = [(y, x, palabra)]
+        if grupo_actual:
+            grupos.append(grupo_actual)
+        
+        # Concatenar las palabras de cada grupo separadas por espacios y unir los grupos con saltos de línea
+        texto_concatenado = "\n".join(" ".join(palabra for _, _, palabra in grupo) for grupo in grupos).strip()
+        
+        # Asignar el texto concatenado y los detalles a la celda
+        contenido_por_celda[id_celda] = {
+            "texto": texto_concatenado,
+            "detalles": contenido_por_celda[id_celda]
+        }
+    
+    # Asignar el contenido a la estructura de la tabla (estructura HTML)
+    for fila in tabla_estructura:
+        for celda in fila:
+            if celda["rowspan"] > 0 and celda["colspan"] > 0:
+                if "id_celda" not in celda:
+                    celda["id_celda"] = None  # Para evitar errores si falta el identificador
+                id_celda = celda["id_celda"]
+                celda["contenido"] = contenido_por_celda.get(id_celda, {"texto": "", "detalles": []})["texto"]
+    
+    return tabla_estructura
 
 
 # ============================
 # 4. FUNCION PRINCIPAL: OBTENER TABLAS USANDO EL PDF ORIGINAL
 # ============================
-def show_pdfplumber_tables_with_buttons(pdf_bytes,folder_path):
+def show_pdfplumber_tables_with_buttons(pdf_bytes,folder_path,fig,ax,bprev,bnext,come_from):
     """Muestra las tablas y las guarda como imágenes recortadas desde el PDF sin texto."""
     # Crear PDF sin texto solo para recortar las tablas
     pdf_bytes.seek(0)
     pdf_copy = io.BytesIO(pdf_bytes.getvalue())
 
     pdf_sin_texto_path = folder_path+r"\documento_temporal_sin_texto.pdf"
-    pdf_bytes_sin_texto = eliminar_texto_preciso(pdf_bytes, pdf_sin_texto_path, 800)  
+    pdf_bytes_sin_texto = eliminar_texto_preciso(pdf_bytes, pdf_sin_texto_path)  
 
     # Abrir ambos PDFs
     pdf_original = pdfplumber.open(pdf_copy)  # Ahora usamos la copia, no el original
@@ -228,11 +338,12 @@ def show_pdfplumber_tables_with_buttons(pdf_bytes,folder_path):
 
     output_folder = folder_path+r"\tablas_recortadas"
     # os.makedirs(output_folder, exist_ok=True)
-
-    
-    fig, ax = plt.subplots(figsize=(11, 8), dpi = 150)
+    # fig.clear()
+    ax.clear()  # Limpiar la figura actual
+    # ax.axis("off")  # Desactivar los ejes
+    # fig, ax = plt.subplots(figsize=(11, 8), dpi = 150)
     plt.subplots_adjust(bottom=0.15)
-    ax.axis("off")
+    # ax.axis("off")
 
     lista_tablas = []
     crop_data=[]
@@ -313,6 +424,34 @@ def show_pdfplumber_tables_with_buttons(pdf_bytes,folder_path):
                     tabla_formateada = tabulate(rows, headers=headers, tablefmt="fancy_grid")
                     if Config.DEBUG_PRINTS:
                         print("    Contenido de la tabla:\n", tabla_formateada)
+                        # === NUEVA PARTE: Extraer palabras en la región de la tabla ===
+                        # Se extraen todas las palabras de la página y se filtran según el bbox de la tabla
+                        words = page.extract_words(x_tolerance=3, y_tolerance=1)
+                        # palabras_pdf = page.extract_words(x_tolerance=3, y_tolerance=1)
+                        words_in_table = [
+                            w for w in words
+                            if w['x0'] >= x0 and w['top'] >= top and w['x1'] <= x1 and w['bottom'] <= bottom
+                        ]
+                        
+                        # if words_in_table:
+                        #     # Crear una nueva figura para mostrar las palabras dentro de la tabla
+                        #     fig_words, ax_words = plt.subplots(figsize=(6, 4))
+                        #     ax_words.set_title("Palabras en la región de la tabla")
+                        #     ax_words.set_xlim(x0, x1)
+                        #     # Configurar los límites verticales e invertir el eje Y para que se muestre de forma natural
+                        #     ax_words.set_ylim(page.height, 0)
+                        #     ax_words.invert_yaxis()
+                            
+                        #     # Dibujar cada palabra en la figura según el centro de su bounding box
+                        #     for w in words_in_table:
+                        #         x_center = (w['x0'] + w['x1']) / 2
+                        #         y_center = page.height - ((w['top'] + w['bottom']) / 2)
+                        #         ax_words.text(x_center, y_center, w['text'],
+                        #                     fontsize=8, ha='center', va='center', color='blue')
+                        #     # plt.show()
+                        # else:
+                        #     print("No se encontraron palabras adicionales en la región de la tabla.")
+                        # plt.waitforbuttonpress()
 
                 # Verificar la estructura de data antes de iterar
                 if Config.DEBUG_PRINTS:
@@ -401,10 +540,17 @@ def show_pdfplumber_tables_with_buttons(pdf_bytes,folder_path):
                                 "centro_texto": (centro_x, centro_y),
                                 "contenido": texto_celda
                             })
+                if Config.DEBUG_PRINTS:
+                    print("Coordenadas del texto")
+                    # plt.waitforbuttonpress()
+
 
                 output_img_path = folder_path+r"\imagenTemporal.png"
                 tabla_actual = os.path.join(output_folder, f"tabla_{page_idx + 1}_{table_idx + 1}.png")
                 tabla_generada,coordenadas_celdas, centros_celdas, image_width, image_height, dimensiones_tabla = crop_and_save_image(pdf_sin_texto, page_idx, (x0, top, x1, bottom), output_img_path,tabla_actual,lista_tablas)
+                if Config.DEBUG_PRINTS:
+                    # input("Presione Enter para continuar")
+                    RtHTML.mostrar_html_pyqt(tabla_generada, tabla_actual)
                 # coordenadas_celdas_convertidas = [convertir_coordenadas_imagen_a_pdf(id_celda, x, y, w, h, x0, top, zoom_x=4.0, zoom_y=4.0)for id_celda, x, y, w, h in cordenadas_celdas]
                 if len(coordenadas_celdas) > 0:
                     coordenadas_celdas_convertidas = convertir_coordenadas_imagen_a_pdf(
@@ -421,14 +567,15 @@ def show_pdfplumber_tables_with_buttons(pdf_bytes,folder_path):
                                         edgecolor="green", facecolor="none", linewidth=0.5)
                         ax.add_patch(rect)
 
-                    nueva_estructura_tabla = asignar_texto_a_estructura(tabla_generada, coordenadas_celdas_convertidas,textos_pdf)
-                    cv2.destroyAllWindows()
+                    # nueva_estructura_tabla = asignar_texto_a_estructura(tabla_generada, coordenadas_celdas_convertidas,textos_pdf)
+                    nueva_estructura_tabla = asignar_texto_a_estructura_new(tabla_generada, coordenadas_celdas_convertidas,words_in_table)
+                    # cv2.destroyAllWindows()
                     if Config.DEBUG_PRINTS:
                         print("NUEVA ESTRUCTURA GENERADA\n",nueva_estructura_tabla)
                     RtHTML.guardar_tabla(nueva_estructura_tabla,tabla_actual,folder_path,path_tablas)
-                    # if Config.DEBUG_PRINTS:
+                    if Config.DEBUG_PRINTS:
                         # input("Presione Enter para continuar")
-                        # RtHTML.mostrar_html_pyqt(nueva_estructura_tabla, tabla_actual)
+                        RtHTML.mostrar_html_pyqt(nueva_estructura_tabla, tabla_actual)
                     lista_tablas.append(tabla_generada)
                     crop_data.append((page_idx, (table_idx, x0-3, top-4, x1+6, bottom+4)))
 
@@ -443,11 +590,12 @@ def show_pdfplumber_tables_with_buttons(pdf_bytes,folder_path):
         ax.set_xlim([0, page.width])
         ax.set_ylim([page.height, 0])
         ax.set_title(f"Página {page_idx + 1} / {total_pages}")
-        
-        next_page(0)#> COMENTAR PARA DEBUG
-        # if Config.DEBUG_PRINTS:
-        # plt.close("all")
-        plt.draw()
+        if not Config.DEBUG_PRINTS:
+            next_page(0)#> COMENTAR PARA DEBUG
+        if Config.DEBUG_PRINTS and page_idx == 0 and not come_from:
+            plt.show()
+        fig.canvas.draw()
+
             
 
     def next_page(event):
@@ -456,6 +604,7 @@ def show_pdfplumber_tables_with_buttons(pdf_bytes,folder_path):
             current_page_idx += 1
             display_page(current_page_idx)
         else:
+            pdf_bytes_llaves_tabla_escrita = pdf_bytes
             if len(crop_data) > 0:
                 # if Config.DEBUG_PRINTS:
                 #   print(f"tabla_{page_idx + 1}_{table_idx + 1}")
@@ -476,29 +625,29 @@ def show_pdfplumber_tables_with_buttons(pdf_bytes,folder_path):
             current_page_idx -= 1
             display_page(current_page_idx)
 
-    ax_prev = plt.axes([0.3, 0.02, 0.15, 0.07])
-    ax_next = plt.axes([0.55, 0.02, 0.15, 0.07])
-    btn_prev = Button(ax_prev, 'Anterior')
-    btn_next = Button(ax_next, 'Siguiente')
+    # ax_prev = plt.axes([0.3, 0.02, 0.15, 0.07])
+    # ax_next = plt.axes([0.55, 0.02, 0.15, 0.07])
+    # btn_prev = Button(ax_prev, 'Anterior')
+    # btn_next = Button(ax_next, 'Siguiente')
 
-    btn_prev.on_clicked(prev_page)
-    btn_next.on_clicked(next_page)
+    bprev.on_clicked(prev_page)
+    bnext.on_clicked(next_page)
 
     display_page(current_page_idx)
     # if not Config.DEBUG_PRINTS:
     #     plt.show()
     # RtHTML.mostrar_html_todas_las_tablas(lista_tablas)
-    pdf_original.close()
-    pdf_sin_texto.close()
+    # pdf_original.close()
+    # pdf_sin_texto.close()
 
-def main(pdf_bytes,folder_path):
+def main(pdf_bytes,folder_path,fig,ax,bprev,bnext, come_from = False):
     """
     Función principal que muestra tablas de un PDF con pdfplumber y botones.
     
     Parámetros:
         ruta_pdf (str): Ruta del PDF a procesar.
     """
-    show_pdfplumber_tables_with_buttons(pdf_bytes,folder_path)  # Llama a tu función con el parámetro recibido
+    show_pdfplumber_tables_with_buttons(pdf_bytes,folder_path,fig,ax,bprev,bnext,come_from)  # Llama a tu función con el parámetro recibido
 
 def pdfplumber_to_fitz(pdf):
     pdf_bytes = io.BytesIO()
@@ -515,7 +664,7 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         pdf_bytes = sys.argv[1]  # Toma el primer argumento después del script
     else:
-        pdf_path = "documento_verticalizado.pdf"  # Valor por defecto si no se pasa argumento}
+        pdf_path = "documento_verticalizado copy.pdf"  # Valor por defecto si no se pasa argumento}
         folder_path = "Curacion_"+pdf_path.split(".pdf")[0]
         if not os.path.exists(folder_path):  # Verifica si la carpeta no existe
             os.mkdir(folder_path)  # Crea la carpeta
@@ -529,5 +678,11 @@ if __name__ == "__main__":
             pdf_bytes = pdfplumber_to_fitz(pdf)  # Convertir pdfplumber a BytesIO para fitz    
             # Asegurar que el stream está en la posición correcta antes de usarlo
             pdf_bytes.seek(0)
+        fig, ax = plt.subplots(figsize=(12, 7), dpi = 125)
+        botones_creados = []
+        ax_prev = plt.axes([0.3, 0.02, 0.15, 0.07])
+        ax_next = plt.axes([0.55, 0.02, 0.15, 0.07])
+        bprev = Button(ax_prev, 'Anterior')
+        bnext = Button(ax_next, 'Siguiente')
 
-    main(pdf_bytes,folder_path)  # Llama a la función con el argumento
+    main(pdf_bytes,folder_path,fig,ax,bprev,bnext)  # Llama a la función con el argumento

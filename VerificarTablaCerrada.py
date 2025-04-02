@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 import Config
 
-def mostrar_imagen_redimensionada(name_image, image, max_ancho=1920, max_alto=1080):
+def mostrar_imagen_redimensionada(name_image, image, max_ancho=1280, max_alto=720):
     """Muestra la imagen redimensionada si excede el tamaño máximo, manteniendo la relación de aspecto."""
     alto_original, ancho_original = image.shape[:2]
     escala = min(max_ancho / ancho_original, max_alto / alto_original)
@@ -88,7 +88,10 @@ def unir_lineas_cercanas(image, kernel_size=3, iterations=1):
         gray = image.copy()
 
     # Aplicar binarización
-    _, binary = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY_INV)
+    _, binary = cv2.threshold(gray, 170, 255, cv2.THRESH_BINARY_INV)
+
+    if Config.DEBUG_IMAGES:
+        mostrar_imagen_redimensionada("Imagen_Binarizada",binary)
 
     # Aplicar dilatación para engrosar líneas y unir espacios pequeños
     kernel = np.ones((kernel_size, kernel_size), np.uint8)

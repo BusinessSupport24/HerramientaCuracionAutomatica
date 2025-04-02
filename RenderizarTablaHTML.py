@@ -43,7 +43,7 @@ def generar_html_tabla(tabla):
         html += "  <tr>\n"
         for celda in fila:
             if celda["rowspan"] > 0 and celda["colspan"] > 0:
-                html += f"    <td rowspan='{celda['rowspan']}' colspan='{celda['colspan']}'>{celda['contenido']}</td>\n"
+                html += f"    <td rowspan='{celda['rowspan']}' colspan='{celda['colspan']}'style='white-space: pre-line;'>{celda['contenido']}</td>\n"
         html += "  </tr>\n"
 
     html += "</table>"
@@ -113,10 +113,19 @@ def image_to_HTML(path_image,tabla_actual):
     lineas_x, lineas_y, max_filas, max_columnas, imagen_malla, umbral_x, umbral_y = eedt.generar_malla(coordenadas_celdas, imagen_width, imagen_height)
 
     # Crear la estructura de la cuadrícula
-    cuadricula = [[{"x": x, "y": y, "w": 0, "h": 0} for x in lineas_x] for y in lineas_y]
+    cuadricula = []
+    for i in range(len(lineas_y)):
+        fila = []
+        for j in range(len(lineas_x)):
+            x = lineas_x[j]
+            y = lineas_y[i]
+            w = lineas_x[j+1] - x if j < len(lineas_x) - 1 else imagen_width - x
+            h = lineas_y[i+1] - y if i < len(lineas_y) - 1 else imagen_height - y
+            fila.append({"x": x, "y": y, "w": w, "h": h})
+        cuadricula.append(fila)
 
     # Generar la estructura de la tabla con celdas unidas aplicando el umbral
-    tabla_generada = eedt.generar_estructura_tabla(coordenadas_celdas, cuadricula, max_filas, max_columnas, imagen_width, imagen_height, umbral_x, umbral_y)
+    tabla_generada = eedt.generar_estructura_tabla_new(coordenadas_celdas, cuadricula, max_filas, max_columnas, imagen_width, imagen_height, tabla_actual)
 
 
     # Mostrar la tabla generada

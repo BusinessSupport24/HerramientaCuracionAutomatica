@@ -150,9 +150,10 @@ def convertir_pdf_a_markdown(pdf_bytes):
                 
             if i > 1:
                 markdown_text += pypandoc.convert_text(text, 'md', format='markdown')  # Convertir con Pandoc
-                print("--"*50)
-                print("Texto MD\n",markdown_text)
-                print("--"*50)
+                if Config.DEBUG_PRINTS:
+                    print("--"*50)
+                    print("Texto MD\n",markdown_text.encode("utf-8", errors="ignore").decode("utf-8"))
+                    print("--"*50)
 
 
     return markdown_text
@@ -184,8 +185,10 @@ def main(pdf_bytes,folder_path):
     markdown_result = convertir_pdf_a_markdown(pdf_bytes)
     with open(folder_path+r"\markdown_puro.md", 'w', encoding='utf-8') as f:
         f.write("".join(markdown_result.split("\n")))
-    markdown_result_tablas_remplazadas = RemplazarTablasDeMarkdown.remplazar_tablas_en_md("".join(markdown_result.split("\n")),folder_path)
-    # print(markdown_result_tablas_remplazadas)
+    if os.path.exists(os.path.join(folder_path,"tablas_html")):
+        markdown_result_tablas_remplazadas = RemplazarTablasDeMarkdown.remplazar_tablas_en_md("".join(markdown_result.split("\n")),folder_path)
+    else:
+        markdown_result_tablas_remplazadas = "".join(markdown_result.split("\n"))    # print(markdown_result_tablas_remplazadas)
     with open(folder_path+r"\markdown_tablas_remplazadas.md", 'w', encoding='utf-8') as f:
         f.write(markdown_result_tablas_remplazadas)
     

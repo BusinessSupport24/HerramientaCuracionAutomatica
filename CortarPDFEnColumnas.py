@@ -38,7 +38,7 @@ def limpiar_nombre_carpeta(nombre):
 
 
 # Ruta del PDF
-pdf_path = "Circular POWER Canal Presencial_pago anticipado_010225.pdf"  # Reemplaza esto con la ruta a tu archivo PDF
+pdf_path = "PTAR 5068_F Tarifa Especial Aliados_V42_0325.pdf"  # Reemplaza esto con la ruta a tu archivo PDF
 nombre_limpio = limpiar_nombre_carpeta(pdf_path.split(".pdf")[0])
 print(nombre_limpio)
 folder_path = f"Curacion_{nombre_limpio}"
@@ -250,6 +250,7 @@ def crop_and_add_to_pdf(page_number, coords,pdf_bytes):
  
 
 def apply_crop_with_pikepdf(pdf_bytes):
+    global buttons, fig, ax, ax_checkbox, ax_checkbox_omitir, axprev, bprev, axnext, bnext, axconfirm, bconfirm, toggle_selector, event_id
 
     if not os.path.exists(folder_path):  # Verifica si la carpeta no existe
         os.mkdir(folder_path)  # Crea la carpeta
@@ -262,18 +263,57 @@ def apply_crop_with_pikepdf(pdf_bytes):
     print("PDF GENERADO CON EXITO")
     pdf_bytes = EDIF.eliminar_elementos_area(crop_data, pdf_bytes,folder_path)
         
-    if Config.DEBUG_PRINTS:
-        # Abrir el PDF en memoria con pdfplumber
-        with pdfplumber.open(pdf_bytes) as pdf:
-            for page in pdf.pages:
-                text = page.extract_text()
-                if Config.DEBUG_PRINTS:
-                    print(text)  # Aquí puedes procesar el texto sin guardar el PDF en disco
-                # plt.waitforbuttonpress()
+    # if Config.DEBUG_PRINTS:
+    #     # Abrir el PDF en memoria con pdfplumber
+    #     with pdfplumber.open(pdf_bytes) as pdf:
+    #         for page in pdf.pages:
+    #             text = page.extract_text()
+    #             if Config.DEBUG_PRINTS:
+    #                 print(text)  # Aquí puedes procesar el texto sin guardar el PDF en disco
+    #             # plt.waitforbuttonpress()
 
         # plt.close()
     print("INICIANDO LA OBTENICION DE TABLAS...")
-    ExtraerTablasSinTextoPDF.main(pdf_bytes,folder_path)  # Llamar a la función `main()`
+    
+    # ax.axis("off")  # Desactivar los ejes
+    # for btn in buttons:
+    #     btn.ax.remove()  # Remueve el contenedor del botón
+
+    # SOLUCIÓN: Desactivar eventos ANTES de eliminar botones
+    for btn in buttons:
+        btn.disconnect_events()  # Desconectar eventos de Matplotlib
+        btn.ax.remove()
+    buttons.clear()
+
+    # SOLUCIÓN: Desactivar eventos en checkboxes y otros botones
+    checkbox.disconnect_events()
+    checkbox_omitir.disconnect_events()
+    bconfirm.disconnect_events()
+    # bnext.disconnect_events()
+    # bprev.disconnect_events()
+
+    # bprev.on_clicked(ExtraerTablasSinTextoPDF.show_pdfplumber_tables_with_buttons)
+    # bnext.on_clicked(ExtraerTablasSinTextoPDF.show_pdfplumber_tables_with_buttons)
+
+    # Eliminar los checkboxes y botones restantes
+    checkbox.ax.remove()
+    
+    checkbox_omitir.ax.remove()
+    # axnext.remove()
+    # axprev.remove()
+    bconfirm.ax.remove()
+
+    toggle_selector.disconnect_events()
+
+    fig.canvas.mpl_disconnect(event_id)
+    # toggle_selector = None  # Eliminar la referencia
+
+    # Limpiar completamente la figura
+
+    # fig.clf()
+    # ax = fig.add_subplot(111)  # Se crea un nuevo eje en la figura
+    # fig.canvas.draw_idle()  # Redibujar la interfaz
+    ExtraerTablasSinTextoPDF.main(pdf_bytes,folder_path,fig, ax, bprev,bnext,True)  # Llamar a la función `main()`
 
     
     # return pdf_bytes  # Si necesitas usarlo en otro lugar, devuélvelo
@@ -339,12 +379,13 @@ def show_page():
     draw_rectangles(ax)
     # Evitar que la actualización dispare `toggle_omitir_colision()`
     checkbox_updating = True
-
-    if current_page_index in paginas_omitidas:
-        checkbox_omitir.set_active(0)  # Activarlo
-    else:
-        checkbox_omitir.set_active(0)  # Activarlo primero (Matplotlib requiere esto)
-        checkbox_omitir.set_active(False)  # Luego desactivarlo
+    
+    if checkbox_omitir.ax.figure is not None:
+        if current_page_index in paginas_omitidas:
+            checkbox_omitir.set_active(0)  # Activarlo
+        else:
+            checkbox_omitir.set_active(0)  # Activarlo primero (Matplotlib requiere esto)
+            checkbox_omitir.set_active(False)  # Luego desactivarlo
 
     checkbox_updating = False  # Habilitar eventos nuevamente
 
@@ -721,7 +762,7 @@ with pdfplumber.open(pdf_path) as pdf:
     # Asegurar que el stream está en la posición correcta antes de usarlo
     pdf_bytes.seek(0)
 
-fig, ax = plt.subplots(figsize=(12, 7))
+fig, ax = plt.subplots(figsize=(14, 9))
 
 # Variable para rastrear el estado del checkbox
 modo_movil = False
@@ -760,6 +801,6 @@ toggle_selector = RectangleSelector(
     button=[1],  # Botón izquierdo del mouse
     minspanx=5, minspany=5, spancoords='pixels', interactive=True
 )
-fig.canvas.mpl_connect("button_press_event", on_click)
+event_id = fig.canvas.mpl_connect("button_press_event", on_click)
 show_page()
 plt.show()

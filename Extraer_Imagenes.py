@@ -49,6 +49,9 @@ def extraer_imagenes(pdf_bytes,folder_path):
                             if mask_img.mode != 'L':
                                 mask_img = mask_img.convert('L')
 
+                            if mask_img.size != base_img.size:
+                                mask_img = mask_img.resize(base_img.size, Image.Resampling.LANCZOS)
+
                             # Combinar la imagen base y la máscara para conservar la transparencia
                             base_img.putalpha(mask_img)
                             background = Image.new("RGB", base_img.size, (255, 255, 255))

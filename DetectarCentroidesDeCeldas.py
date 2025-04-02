@@ -58,7 +58,7 @@ def limpiar_imagen(imagen):
         mostrar_imagen_redimensionada("Imagen hsv",hsv)
 
     # Máscara para colores (excluye escala de grises)
-    lower_color = np.array([0, 50, 50])   # Valores con saturación alta (color)
+    lower_color = np.array([0, 150, 150])   # Valores con saturación alta (color)
     upper_color = np.array([180, 255, 255])
     mascara_colores = cv2.inRange(hsv, lower_color, upper_color)
 
