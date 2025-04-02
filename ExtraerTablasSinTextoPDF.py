@@ -42,8 +42,9 @@ def eliminar_texto_preciso(pdf_bytes, output_path):
         current_x, current_y = 0, 0
         nuevas_lineas = []
 
-        print("Contenido decodificado de la página:")
-        print(contenido[:100000])  # Imprime una parte del contenido para inspección
+        if Config.DECODIFICAR:
+            print("Contenido decodificado de la página:")
+            print(contenido[:100000])  # Imprime una parte del contenido para inspección
 
         for line in contenido.split("\n"):
             # Detectar matrices de transformación (Tm) y desplazamientos de texto (Td)
@@ -63,19 +64,24 @@ def eliminar_texto_preciso(pdf_bytes, output_path):
         """Verifica y elimina texto dentro de XObjects y Form XObjects."""
         if "/Resources" in page and "/XObject" in page["/Resources"]:
             xobjects = page["/Resources"]["/XObject"]
-            print("XObjects detectados en la página:", list(xobjects.keys()))
+            if Config.DEBUG_PRINTS:
+                print("XObjects detectados en la página:", list(xobjects.keys()))
+                plt.waitforbuttonpress()
             for xobj_name in list(xobjects):
                 xobj = xobjects[xobj_name]
                 if isinstance(xobj, pikepdf.Stream):
                     try:
                         contenido_xobj = xobj.read_bytes()  # Usar read_bytes en lugar de decode
                         contenido_xobj = contenido_xobj.decode("latin1", errors="ignore")
-                        print(f"Contenido decodificado de XObject {xobj_name}:")
-                        print(contenido_xobj[:100000])  # Imprime una parte del contenido del XObject
+                        if Config.DEBUG_PRINTS:
+                            print(f"Contenido decodificado de XObject {xobj_name}:")
+                            plt.waitforbuttonpress()
+                            print(contenido_xobj[:100000])  # Imprime una parte del contenido del XObject
                         nuevo_contenido_xobj = procesar_contenido(contenido_xobj)
                         xobj.write(nuevo_contenido_xobj)
                     except pikepdf.PdfError:
-                        print(f"No se pudo leer el contenido de XObject {xobj_name}, posiblemente está codificado.")
+                        if Config.DEBUG_PRINTS:
+                            print(f"No se pudo leer el contenido de XObject {xobj_name}, posiblemente está codificado.")
 
     for i, page in enumerate(pdf.pages):
         if Config.DEBUG_PRINTS:
@@ -424,14 +430,14 @@ def show_pdfplumber_tables_with_buttons(pdf_bytes,folder_path,fig,ax,bprev,bnext
                     tabla_formateada = tabulate(rows, headers=headers, tablefmt="fancy_grid")
                     if Config.DEBUG_PRINTS:
                         print("    Contenido de la tabla:\n", tabla_formateada)
-                        # === NUEVA PARTE: Extraer palabras en la región de la tabla ===
-                        # Se extraen todas las palabras de la página y se filtran según el bbox de la tabla
-                        words = page.extract_words(x_tolerance=3, y_tolerance=1)
-                        # palabras_pdf = page.extract_words(x_tolerance=3, y_tolerance=1)
-                        words_in_table = [
-                            w for w in words
-                            if w['x0'] >= x0 and w['top'] >= top and w['x1'] <= x1 and w['bottom'] <= bottom
-                        ]
+                    # === NUEVA PARTE: Extraer palabras en la región de la tabla ===
+                    # Se extraen todas las palabras de la página y se filtran según el bbox de la tabla
+                    words = page.extract_words(x_tolerance=3, y_tolerance=1)
+                    # palabras_pdf = page.extract_words(x_tolerance=3, y_tolerance=1)
+                    words_in_table = [
+                        w for w in words
+                        if w['x0'] >= x0 and w['top'] >= top and w['x1'] <= x1 and w['bottom'] <= bottom
+                    ]
                         
                         # if words_in_table:
                         #     # Crear una nueva figura para mostrar las palabras dentro de la tabla
