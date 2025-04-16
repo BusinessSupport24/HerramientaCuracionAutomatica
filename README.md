@@ -166,7 +166,7 @@ A continuación se describe de forma resumida el flujo de trabajo para convertir
 - **Botones de delimitación:**  
   Estos botones varían según el modo seleccionado.
   
-  _[Se muestra una imagen de la ventana inicial modo normal]_  
+  ![Se muestra una imagen de la ventana inicial modo normal](https://github.com/BusinessSupport24/HerramientaCuracionAutomatica/blob/main-documentada/README%20images/ventana%20inicial%20modo%20normal.png?raw=true)  
 
 ### 2. Modo Normal
 
@@ -176,18 +176,18 @@ En este modo se cuentan con cinco botones, pero únicamente se utilizan tres par
   - Se utiliza para delimitar el encabezado.  
   - Se debe dibujar un recuadro justo a la mitad horizontal del encabezado.  
   - Se debe verificar con los botones de siguiente y anterior que el recuadro no se sobrepone (colisiona) con ningún texto, tabla o imagen en todas las páginas.  
-  _[Imagen de ejemplo de un encabezado en modo normal delimitado correctamente]_  
+  ![Imagen de ejemplo de un encabezado en modo normal delimitado correctamente](https://github.com/BusinessSupport24/HerramientaCuracionAutomatica/blob/main-documentada/README%20images/encabezado%20en%20modo%20normal%20delimitado%20correctamente.png?raw=true)
 
 - **Botón de Columna Izquierda:**  
   - Se usa para delimitar las dos columnas y "verticalizar" el PDF, es decir, para que las columnas aparezcan en páginas separadas.  
   - Al definir este límite, automáticamente se asignan los límites para la columna derecha y el pie de página.  
   - Es fundamental evitar que el rectángulo delimite colisiones con otros elementos.  
-  _[Imagen de ejemplo de un rectángulo de columna izquierda correctamente posicionado]_  
+  ![Imagen de ejemplo de un rectángulo de columna izquierda correctamente posicionado](https://github.com/BusinessSupport24/HerramientaCuracionAutomatica/blob/main-documentada/README%20images/rect%C3%A1ngulo%20de%20columna%20izquierda%20correctamente%20posicionado.png?raw=true)
 
 - **Botón de Excepción:**  
   - Muy importante para los casos en que, en un PDF con columnas, algún elemento (párrafo, tabla o imagen) ocupa el espacio de dos columnas.  
   - Se utiliza para encerrar ese elemento y asegurar que el reordenamiento de los contenidos sea correcto.  
-  _[Imagen de ejemplo de un rectángulo de excepción correctamente posicionado]_  
+  ![Imagen de ejemplo de un rectángulo de excepción correctamente posicionado](https://github.com/BusinessSupport24/HerramientaCuracionAutomatica/blob/main-documentada/README%20images/rect%C3%A1ngulo%20de%20excepci%C3%B3n%20correctamente%20posicionado.png?raw=true)
 
 > **Nota:**  
 > Los botones de **columna derecha** y **pie de página** no se deben usar de forma manual, ya que sus límites se definen automáticamente al posicionar el rectángulo de la columna izquierda.
@@ -196,29 +196,30 @@ En este modo se cuentan con cinco botones, pero únicamente se utilizan tres par
 
 En este modo se recomienda usar dos botones principales:
 
-_[Se muestra una imagen de la ventana inicial modo movil]_  
+![Se muestra una imagen de la ventana inicial modo movil](https://github.com/BusinessSupport24/HerramientaCuracionAutomatica/blob/main-documentada/README%20images/ventana%20inicial%20modo%20movil.png?raw=true)
 
 - **Botón de Encabezado Móvil:**  
   - Encierra únicamente el encabezado de información junto con su línea divisoria.  
-  _[Imagen de ejemplo del botón de encabezado móvil correctamente posicionado]_  
+  ![Imagen de ejemplo del botón de encabezado móvil correctamente posicionado](https://github.com/BusinessSupport24/HerramientaCuracionAutomatica/blob/main-documentada/README%20images/bot%C3%B3n%20de%20encabezado%20m%C3%B3vil%20correctamente%20posicionado.png?raw=true)
 
 - **Botón de Columna Móvil:**  
   - Debe encerrar prácticamente toda la página.  
   - **Importante:** En la mayoría de los casos, aunque el recuadro de la columna móvil pueda colisionar con algún elemento, el software no lo mostrará como error, pero se debe colocar con cuidado.  
-  _[Imagen de ejemplo de la columna móvil correctamente posicionada]_
-  _[Imagen de ejemplo de la columna móvil correctamente posicionada dos]_  
+  ![Imagen de ejemplo de la columna móvil correctamente posicionada](https://github.com/BusinessSupport24/HerramientaCuracionAutomatica/blob/main-documentada/README%20images/columna%20m%C3%B3vil%20correctamente%20posicionada.png?raw=true)
+  ![Imagen de ejemplo de la columna móvil correctamente posicionada dos](https://github.com/BusinessSupport24/HerramientaCuracionAutomatica/blob/main-documentada/README%20images/columna%20m%C3%B3vil%20correctamente%20posicionada%20dos.png?raw=true)
 
 #### Manejo de casos particulares en modo móvil
 
 - **Posicionamiento sin colisión imposible:**  
   En algunas páginas puede ser imposible posicionar el recuadro de la columna móvil sin que colisione por completo con algún elemento.  
-  _[Imagen de ejemplo de un caso de colisión imposible]_  
+  ![Imagen de ejemplo de un caso de colisión imposible](https://github.com/BusinessSupport24/HerramientaCuracionAutomatica/blob/main-documentada/README%20images/caso%20de%20colisi%C3%B3n%20imposible.png?raw=true)
 
 - **Botón "Omitir Colisión":**  
-  - Se utiliza junto con el botón de **Pie de Página** para casos donde el recuadro de la columna móvil colisiona.  
-  - El botón de pie de página delimita el área desde el punto de click hasta el límite inferior del recuadro de columna móvil.  
-  - **Importante:** No se debe usar el botón de "Pie de Página Móvil" sin haber posicionado primero el recuadro de columna móvil.  
-  _[Imagen de ejemplo del botón de pie de página móvil posicionado]_  
+  - Se utiliza junto con el botón de **Pie de Página** para casos donde el recuadro de la columna móvil es imposible hacer que no colisione.  
+  - El botón de pie de página delimita el área desde el punto de click, hasta el límite inferior del recuadro delimitado de columna móvil.  
+  - **Importante:** No se debe usar el botón de "Pie de Página Móvil" sin haber posicionado primero el recuadro de columna móvil.
+  - Esto hará que no aparezca error de colision del software, y que se tome toda la pagina con pie de pagina incluido, para que el contenido no se corte.
+  ![Imagen de ejemplo del botón de pie de página móvil posicionado](https://github.com/BusinessSupport24/HerramientaCuracionAutomatica/blob/main-documentada/README%20images/bot%C3%B3n%20de%20pie%20de%20p%C3%A1gina%20m%C3%B3vil%20posicionado.png?raw=true)
 
 ### 4. Flujo General
 
@@ -229,7 +230,7 @@ _[Se muestra una imagen de la ventana inicial modo movil]_
   Una vez que todos los rectángulos estén correctamente posicionados, se presiona el botón de **Confirmar**.  
   - El sistema verifica que en ninguna página exista colisión entre los elementos delimitados.  
   - Si se detecta alguna colisión, se mostrará una nueva ventana con la página en la que se encuentra el problema.  
-    _[Imagen de ejemplo del software detectando una colisión]_  
+    ![Imagen de ejemplo del software detectando una colisión](https://github.com/BusinessSupport24/HerramientaCuracionAutomatica/blob/main-documentada/README%20images/software%20detectando%20una%20colisi%C3%B3n.png?raw=true)
   - Si todo es correcto, el programa finaliza y genera la carpeta con el archivo Markdown, notificando al usuario la finalización del proceso.
 
 
