@@ -4,36 +4,61 @@ import re
 import io
 import traceback
 import Config
+from pathlib import Path
+
+def convertir_a_ruta_larga(path_str):
+    """
+    Convierte una ruta relativa a una ruta "larga" para Windows utilizando el prefijo '\\\\?\\'.
+    Esto permite manejar rutas que exceden el límite habitual de Windows.
+    
+    :param path_str: Ruta original en forma de cadena.
+    :return: Ruta formateada como "ruta larga".
+    """
+    path = Path(path_str)
+    abs_path = path.resolve()  # Obtiene la ruta absoluta
+    if not abs_path.drive:
+        return str(abs_path)
+    # Si se detecta una unidad de disco, aplica el prefijo para rutas largas.
+    return r"\\?\{}".format(str(abs_path))
+
 
 def elemento_en_area(x, y, area):
     """
     Determina si un punto (x, y) está dentro del área de interés.
+
+    :param x: Coordenada X del punto.
+    :param y: Coordenada Y del punto.
+    :param area: Tuple (ax1, ay1, ax2, ay2) que define la zona de interés.
+    :return: True si el punto está dentro del área, False en caso contrario.
     """
     ax1, ay1, ax2, ay2 = area
     return ax1 <= x <= ax2 and ay1 <= y <= ay2
 
+
 def agregar_texto_a_pagina(pdf, page_number, x, y, texto, font_name="/F1", font_size=8.04, color="0 G"):
     """
-    Agrega un texto en una página PDF con configuración completa.
+    Construye una cadena de comandos PDF que inserta un bloque de texto en una página en una ubicación específica.
     
-    Parámetros:
-        - pdf_path (str): Ruta del PDF de entrada.
-        - output_path (str): Ruta del PDF de salida.
-        - page_number (int): Número de la página (0-indexed).
-        - x (float): Posición X del texto.
-        - y (float): Posición Y del texto.
-        - texto (str): Texto a escribir.
-        - font_name (str): Nombre de la fuente en el PDF (ejemplo: "/F1").
-        - font_size (float): Tamaño de la fuente.
-        - color (str): Color del texto en sintaxis PDF ("0 G" para negro, "1 0 0 rg" para rojo).
+    La cadena generada está compuesta por:
+      - 'q' para guardar el estado gráfico.
+      - 'BT' y 'ET' para iniciar y terminar el bloque de texto.
+      - 'Tf' para definir la fuente y su tamaño.
+      - 'Tm' para posicionar el texto.
+      - 'TJ' para mostrar el texto.
+      - 'Q' para restaurar el estado gráfico.
+    
+    Esta función se utiliza para insertar "llaves" en el PDF en el sitio donde se ha eliminado una imagen.
+    
+    :param pdf: Objeto PDF (no se utiliza directamente para modificar, pero puede extenderse).
+    :param page_number: Número de la página (0-indexado) en la que se insertará el texto.
+    :param x: Coordenada X de la posición.
+    :param y: Coordenada Y de la posición.
+    :param texto: Texto a insertar.
+    :param font_name: Nombre de la fuente, por defecto "/F1".
+    :param font_size: Tamaño de la fuente (por defecto 8.04).
+    :param color: Comando de color en sintaxis PDF ("0 G" para negro).
+    :return: Cadena en sintaxis PDF que representa la inserción del texto.
     """
-    # Abrir el PDF
-    # pdf = pikepdf.Pdf.open(pdf_path)
-
-    # Obtener la página seleccionada
-    # page = pdf.pages[page_number]
-
-    # Construir el contenido de texto en sintaxis PDF
     text_stream = f"""
     q
     BT
@@ -44,224 +69,196 @@ def agregar_texto_a_pagina(pdf, page_number, x, y, texto, font_name="/F1", font_
     ET
     Q
     """
-
-    # # Crear un nuevo flujo de contenido
-    # new_stream = pikepdf.Stream(pdf, text_stream.encode('latin1'))
-
-    # # Agregar el texto al contenido de la página
-    # page.contents_add(new_stream)
-
     if Config.DEBUG_PRINTS:
         print(f"Texto añadido en página {page_number + 1} en coordenadas ({x}, {y}).")
-
     return text_stream
 
-def filtrar_contenido(decoded_data, area_interes, primera_pagina,page_number):
-    already_writed = False
-    is_rectangle = False
-    is_text = False
-    is_line = False
-    is_vector = False
 
-    ax1, ay1, ax2, ay2 = area_interes
-
+def filtrar_contenido(decoded_data, area_interes, primera_pagina, page_number):
     """
-    Filtra el contenido del flujo de la página eliminando texto y vectores dentro del área de interés.
+    Filtra el contenido de un flujo de página, eliminando líneas (comandos de texto,
+    vectores, rectángulos, etc.) cuyo punto de referencia se encuentre dentro de un área de interés.
+
+    El proceso es el siguiente:
+      - Se divide el contenido en líneas.
+      - Se actualizan las coordenadas actuales (current_x, current_y) usando comandos Tm y Td.
+      - Para cada línea se detecta la presencia de texto (Tj o TJ), líneas vectoriales (m, l) o rectángulos (re).
+      - Si la posición (current_x, current_y) cae dentro del área de interés, se marca la línea para eliminarla.
+      - Se detecta también el uso de imágenes ('Do'); si se determina que la imagen está en el área, se elimina.
+      - Finalmente, se unen las líneas que no fueron eliminadas.
+
+    :param decoded_data: Cadena decodificada del flujo de contenido de la página.
+    :param area_interes: Tuple (ax1, ay1, ax2, ay2) que define la región donde se desea filtrar contenido.
+    :param primera_pagina: Indicador para imprimir mensajes de depuración en la primera página.
+    :param page_number: Número de la página actual (0-indexado).
+    :return: Cadena resultante con el contenido filtrado.
     """
-    text_chunks = []
-    current_x, current_y = 0, 0  # Coordenadas iniciales
+    text_chunks = []  # Almacena las líneas que se conservarán
+    current_x, current_y = 0, 0  # Inicializa las coordenadas en 0
+    eliminar = False  # Bandera que indica si la línea se debe eliminar
 
-    eliminar = False
-
-    lineas_codificadas = []
-
+    # Dividir el contenido en líneas para procesamiento
     lines = decoded_data.split("\n")
     if page_number == 0 and primera_pagina == 0 and Config.DEBUG_PRINTS:
-        # print("Decodificado")
-        # print(decoded_data[:30000])
-        # print("Lineas")
-        # print(lines)
+        # Ajuste inicial para la primera página
         primera_pagina = 1
-        # print(lines)
 
-    # if page_number == 0:
-    #     print("Lineas",lines)
-    #     # print(lines)
-
+    # Procesar línea por línea
     for i, line in enumerate(lines):
-        # if Config.DEBUG_PRINTS:
-        #   print(line)
-        # line = lines[i]
-        eliminar = False  # Bandera para eliminar la línea
+        eliminar = False  # Reiniciar la bandera para cada línea
 
-        # Detectar matrices de transformación (Tm)
+        # Detectar matriz de transformación (Tm) para actualizar la posición
         tm_match = re.search(r'([-0-9.]+) ([-0-9.]+) ([-0-9.]+) ([-0-9.]+) ([-0-9.]+) ([-0-9.]+) Tm', line)
         if tm_match:
+            # Se ignoran los primeros 4 valores; se extraen 'e' y 'f'
             _, _, _, _, current_x, current_y = map(float, tm_match.groups())
 
-        # Detectar desplazamiento de texto (Td)
+        # Detectar desplazamiento (Td) para actualizar la posición
         td_match = re.search(r'([-0-9.]+) ([-0-9.]+) Td', line)
         if td_match:
             dx, dy = map(float, td_match.groups())
             current_x += dx
             current_y += dy
 
-        # Detectar texto con Tj
+        # Detectar líneas de texto en Tj
         text_match = re.search(r'\[((?:\([^)]*\)|<[^>]+>)[^]]*)\] T[Jj]', line)
         if text_match:
             text = text_match.group(1)
-
-            # Solo usamos x1, y1
-            x1, y1 = current_x, current_y
-            is_text = True
+            x1, y1 = current_x, current_y  # Posición de referencia
+            # Si la posición se encuentra en el área de interés, marcar para eliminar
             eliminar = elemento_en_area(x1, y1, area_interes)
-
             if primera_pagina == 0 and Config.DEBUG_PRINTS:
                 print(f"Texto: '{text}' - X1: {x1}, Y1: {y1} - {'[ELIMINADO]' if eliminar else '[MANTENIDO]'}")
 
-        # Detectar texto con TJ (fragmentado)
+        # Detectar texto fragmentado con TJ y unirlo
         tj_match = re.findall(r'\((.*?)\)', line)
         if tj_match and "TJ" in line:
             text = "".join(tj_match)
             x1, y1 = current_x, current_y
-            # is_text = True
             eliminar = elemento_en_area(x1, y1, area_interes)
-
             if primera_pagina == 0 and Config.DEBUG_PRINTS:
                 print(f"Texto: '{text}' - X1: {x1}, Y1: {y1} - {'[ELIMINADO]' if eliminar else '[MANTENIDO]'}")
 
-        # Detectar líneas vectoriales (l) y movimiento (m)
-        vector_match = re.search(r'([-0-9.]+) ([-0-9.]+) m', line)  # Movimiento inicial
-        line_match = re.search(r'([-0-9.]+) ([-0-9.]+) l', line)  # Línea
-
+        # Detectar comandos de movimiento 'm' y de dibujo de líneas 'l'
+        vector_match = re.search(r'([-0-9.]+) ([-0-9.]+) m', line)
+        line_match = re.search(r'([-0-9.]+) ([-0-9.]+) l', line)
         if vector_match:
             x, y = map(float, vector_match.groups())
             eliminar = elemento_en_area(x, y, area_interes)
-            is_vector = True
             if primera_pagina == 0 and Config.DEBUG_PRINTS:
-                print(f"Vector: Movimiento a ({x}, {y}) - {'[ELIMINADO]' if eliminar else '[MANTENIDO]'}")
-
+                print(f"Vector (m): ({x}, {y}) - {'[ELIMINADO]' if eliminar else '[MANTENIDO]'}")
         if line_match:
             x, y = map(float, line_match.groups())
             eliminar = elemento_en_area(x, y, area_interes)
-            is_line = True
             if primera_pagina == 0 and Config.DEBUG_PRINTS:
-                print(f"Vector: Línea a ({x}, {y}) - {'[ELIMINADO]' if eliminar else '[MANTENIDO]'}")
+                print(f"Línea (l): ({x}, {y}) - {'[ELIMINADO]' if eliminar else '[MANTENIDO]'}")
 
-        # Detectar rectángulos (re)
+        # Detectar comando para dibujar un rectángulo ('re')
         rect_match = re.search(r'([-0-9.]+) ([-0-9.]+) ([-0-9.]+) ([-0-9.]+) re', line)
         if rect_match:
             x, y, w, h = map(float, rect_match.groups())
             eliminar = elemento_en_area(x, y, area_interes)
-            is_rectangle = True
             if primera_pagina == 0 and Config.DEBUG_PRINTS:
                 print(f"Rectángulo: ({x}, {y}, {w}, {h}) - {'[ELIMINADO]' if eliminar else '[MANTENIDO]'}")
 
-        # # Detectar imágenes en XObjects
-        # xobject_match = re.search(r'/XObject\s+(\d+\s+\d+\s+obj)', line)
-        # if xobject_match:
-        #     obj_id = xobject_match.group(1)
-        #     eliminar = elemento_en_area(current_x, current_y, area_interes)
-        #     if primera_pagina == 0 and Config.DEBUG_PRINTS:
-        #         print(f"Imagen: XObject {obj_id} en ({current_x}, {current_y}) - {'[ELIMINADO]' if eliminar else '[MANTENIDO]'}")
-
-        # Detectar imágenes usadas en la página (Do)
-
-        # Detectar matrices de transformación (cm) para obtener coordenadas de la imagen
+        # Detectar el uso de imágenes (comando 'Do')
         cm_match = re.search(r'([-0-9.]+) ([-0-9.]+) ([-0-9.]+) ([-0-9.]+) ([-0-9.]+) ([-0-9.]+) cm', line)
         if cm_match:
             a, b, c, d, e, f = map(float, cm_match.groups())
-            current_x, current_y = e, f  # e, f representan la posición de la imagen
-
-        # Detectar uso de imágenes en la página (Do), verificando que sean imágenes
+            current_x, current_y = e, f  # Actualizar la posición de la imagen
+        
         do_match = re.search(r'/([A-Za-z0-9]+)\s+Do', line)
         if do_match:
             obj_id = do_match.group(1)
-            # # Buscar si el objeto es una imagen
-            # is_image = re.search(rf'/Subtype\s*/Image\s+/Name\s+/{obj_id}', "\n".join(lines))
-            # if is_image:
             eliminar_img = elemento_en_area(current_x, current_y, area_interes)
             if primera_pagina == 1 and Config.DEBUG_PRINTS:
-                print(f"Imagen detectada en ({current_x}, {current_y}) - {'[ELIMINADO]' if eliminar else '[MANTENIDO]'}")
+                print(f"Imagen (Do) detectada en ({current_x}, {current_y}) - {'[ELIMINADO]' if eliminar_img else '[MANTENIDO]'}")
             if eliminar_img:
-                line = re.sub(r'/([A-Za-z0-9]+)\s+Do', '', line)  # Solo elimina `/Image20 Do`
-            # if Config.DEBUG_PRINTS:
-            #   print(area_interes)
-            #   print("linea",line)
-            #   print(f"Imagen: Referencia Do a {obj_id} en ({current_x}, {current_y})")
-
-        # # Detectar si el objeto es una imagen (Subtype /Image)
-        # image_match = re.search(r'/Subtype\s*/Image', line)
-        # if image_match:
-        #     eliminar = elemento_en_area(current_x, current_y, area_interes)
-        #     if primera_pagina == 0 and Config.DEBUG_PRINTS:
-        #         print(f"Imagen detectada en ({current_x}, {current_y}) - {'[ELIMINADO]' if eliminar else '[MANTENIDO]'}")
-
-
-        # Solo agregamos líneas que no sean eliminadas
+                # Si la imagen debe eliminarse, quitar la referencia
+                line = re.sub(r'/([A-Za-z0-9]+)\s+Do', '', line)
+        # Solo agregar la línea si no fue marcada para eliminar
         if not eliminar:
             text_chunks.append(line)
 
-
+    # Devolver el contenido filtrado uniendo las líneas conservadas
     return "\n".join(text_chunks)
-    
 
-def eliminar_elementos_area(crop_data, pdf_bytes,folder_path):
+
+def eliminar_elementos_area(crop_data, pdf_bytes, folder_path):
+    """
+    Elimina los elementos (texto, vectores, etc.) contenidos dentro de las áreas de interés definidas
+    en 'crop_data' de un PDF. Se crea un nuevo PDF en el que se han removido dichos elementos.
+
+    Procedimiento:
+      1. Se reinicia el puntero del BytesIO del PDF.
+      2. Se abre el PDF original con pikepdf.
+      3. Se crea un nuevo PDF (vacío) para alojar las páginas modificadas.
+      4. Se agrupan las áreas de interés por página.
+      5. Para cada página:
+         - Se realiza una copia de la página original.
+         - Se convierten las coordenadas del área de interés del sistema de Matplotlib al sistema de pikepdf (invirtiendo el eje Y).
+         - Se recorre cada objeto del contenido de la página y se filtra el contenido utilizando 'filtrar_contenido'.
+         - Se reemplaza el contenido original por el filtrado.
+      6. Se añaden las páginas modificadas al nuevo PDF.
+      7. Se remueven recursos sin usar y se guarda el PDF resultante en el folder de destino.
+      8. Se retorna el PDF modificado como un objeto BytesIO.
+
+    :param crop_data: Lista de tuplas (page_number, area) donde 'area' es (left, top, right, bottom) en coordenadas de Matplotlib.
+    :param pdf_bytes: BytesIO del PDF original.
+    :param folder_path: Ruta de la carpeta donde se guardará el PDF modificado.
+    :return: BytesIO del nuevo PDF con los elementos internos eliminados en las áreas definidas.
+    """
     primera_pagina = 0
 
-    # Asegurarse de que el flujo de bytes está al inicio
+    # Asegurar que el flujo de bytes comience desde el principio
     pdf_bytes.seek(0)
-
-    # Cargar el PDF original
     pdf = pikepdf.open(pdf_bytes)
 
-    # Crear un nuevo PDF modificado
+    # Crear un nuevo PDF para almacenar las páginas modificadas
     new_pdf = pikepdf.Pdf.new()
 
-    # Agrupar áreas de interés por número de página
+    # Inicializar un diccionario con una lista de áreas para cada página
     page_areas = {}
-
     for i in range(len(pdf.pages)):
         page_areas[i] = []
     for page_number, rect in crop_data:
         page_areas[page_number].append(rect)
 
     if Config.DEBUG_PRINTS:
-        print("Page_Areas")
+        print("Page_Areas:")
         print(page_areas)
 
     # Iterar sobre cada página con áreas de interés
     for page_number, areas_interes in page_areas.items():
         if Config.DEBUG_PRINTS:
-            print(f"\nProcesando Página {page_number + 1} con {len(areas_interes)} áreas de interés")
-
-        # Obtener la página original sin modificarla
+            print(f"\nProcesando Página {page_number + 1} con {len(areas_interes)} área(s) de interés")
+        
+        # Obtener la página original
         original_page = pdf.pages[page_number]
         
-        # Crear un nuevo PDF temporal para modificar la página original
+        # Crear una copia temporal de la página para modificarla
         temp_pdf = pikepdf.Pdf.new()
         temp_pdf.pages.append(original_page)
         page_copy = temp_pdf.pages[0]
 
-        # Obtener el tamaño de la página (ancho, alto)
+        # Obtener dimensiones de la página para convertir las coordenadas
         _, _, width, height = original_page.mediabox
 
         if Config.DEBUG_PRINTS:
-            print("AREAS DE INTERES")
-            print(len(areas_interes))
+            print("Cantidad de áreas en la página:", len(areas_interes))
 
-        if len(areas_interes)>0:
-
-            # Convertir coordenadas de Matplotlib a PikePDF (invertir Y)
+        if len(areas_interes) > 0:
+            # Convertir cada área de interés del sistema Matplotlib al sistema de pikepdf (invertir eje Y)
             areas_interes_pdf = []
             for area_interes in areas_interes:
                 table_idx, left, top, right, bottom = area_interes
                 top_pdf = float(height) - bottom
                 bottom_pdf = float(height) - top
-                areas_interes_pdf.append((table_idx,(left, top_pdf, right, bottom_pdf)))
-
+                areas_interes_pdf.append((table_idx, (left, top_pdf, right, bottom_pdf)))
+            
             page_obj = page_copy.obj
 
+            # Iterar sobre cada objeto en la página
             for key, obj_ref in page_obj.items():
                 try:
                     if isinstance(obj_ref, pikepdf.Stream):
@@ -273,7 +270,6 @@ def eliminar_elementos_area(crop_data, pdf_bytes,folder_path):
 
                     if isinstance(obj, pikepdf.Stream):
                         raw_data = obj.read_raw_bytes()
-
                         try:
                             decoded_data = obj.get_data().decode('latin1', errors='ignore')
                         except:
@@ -283,62 +279,46 @@ def eliminar_elementos_area(crop_data, pdf_bytes,folder_path):
                                 print(f"[!] No se pudo descomprimir el flujo en Página {page_number + 1}")
                                 continue
 
-                        # Filtrar todas las áreas de interés en una sola copia de la página
+                        # Para cada área de interés, filtrar el contenido de la página
                         for table_idx, area_interes_pdf in areas_interes_pdf:
                             left, top, right, bottom = area_interes_pdf
                             decoded_data = filtrar_contenido(decoded_data, area_interes_pdf, primera_pagina, page_number)
+                            # Agregar una llave única indicando la remoción de contenido en la tabla
                             texto = f"(Llave_Unica_Tabla_{page_number+1}_{table_idx+1})"
-                            decoded_data = decoded_data+ agregar_texto_a_pagina(new_pdf,page_number, left, top+((bottom-top)/2), texto)
-                            # agregar_texto_a_pagina(temp_pdf, page_copy, ax1, ay1, f"Llave_unica_tabla_{page_number}_{table_idx}", font_name="/F1", font_size=8.04, color="0 G")
-
+                            decoded_data = decoded_data + agregar_texto_a_pagina(new_pdf, page_number, left, top + ((bottom - top)/2), texto)
+                        
                         if primera_pagina == 0:
                             primera_pagina = None
 
-                        # Si no hubo cambios, no modificar la página
+                        # Si el contenido no cambió, continuar
                         if decoded_data == obj.read_bytes().decode('latin1', errors='ignore'):
                             continue
 
-                        # Modificar solo el contenido sin afectar imágenes ni gráficos
+                        # Crear un nuevo flujo con el contenido filtrado y reemplazar el original
                         new_stream = pikepdf.Stream(temp_pdf, decoded_data.encode('latin1', errors='ignore'))
-
-                        # Reemplazar el contenido modificado
                         page_obj[key] = new_stream
 
                 except Exception as e:
                     error_trace = traceback.format_exc()
                     print(f"[!] Error al procesar el objeto en Página {page_number + 1}: {e}")
                     print(f"[!] Detalles del error:\n{error_trace}")
+
         else:
             page_copy = original_page
-            areas_interes_pdf = []
 
+        # Agregar la página modificada al nuevo PDF
         new_pdf.pages.append(page_copy)
 
-        # if len(areas_interes_pdf)>0:
-        #     for table_idx, area_interes_pdf in areas_interes_pdf:
-        #         ax1, ay1, ax2, ay2 = area_interes_pdf
-        #         if Config.DEBUG_PRINTS:
-        #             print("Cantidad de paginas en el nuevo pdf")
-        #             print(len(new_pdf.pages))
-        #         #   print("Numero de la pagina a agregar el texto")
-        #         #   print(page_number)
-        #         texto = f"(Llave_Unica_Tabla_{page_number+1}_{table_idx+1})"
-        #         if Config.DEBUG_PRINTS:
-        #             print("Agregando el texto: ",texto)
-        #         agregar_texto_a_pagina(new_pdf,page_number, ax1, ay1+((ay2-ay1)/2), texto)
-
-
-
-    # Guardar el PDF sin texto ni vectores en las áreas de interés
+    # Remover recursos sin referenciar
     new_pdf.remove_unreferenced_resources()
-    new_pdf.save(folder_path+r"\documento_verticalizado_llaves_tablas.pdf")
+
+    # Convertir la carpeta de destino a ruta larga para Windows
+    folder_path_ruta_larga = convertir_a_ruta_larga(folder_path)
+    new_pdf.save(folder_path_ruta_larga + r"\documento_verticalizado_llaves_tablas.pdf")
     
     pdf_bytes_llaves_tabla_escrita = io.BytesIO()
     new_pdf.save(pdf_bytes_llaves_tabla_escrita)
-    pdf_bytes.seek(0)  # Volver al inicio del buffer
-
+    pdf_bytes.seek(0)  # Reiniciar el buffer
     if Config.DEBUG_PRINTS:
-        print("\nProceso finalizado: Se ha guardado el nuevo PDF con los elementos dentro de las áreas eliminadas como documento_recortado_tb_remplazadas.pdf.")
-
+        print("\nProceso finalizado: Nuevo PDF guardado como 'documento_verticalizado_llaves_tablas.pdf'.")
     return pdf_bytes_llaves_tabla_escrita
-

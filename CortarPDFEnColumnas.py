@@ -1,9 +1,20 @@
+"""
+CortarPDFEnColumnas.py
+
+Este módulo permite interactuar con un PDF para recortar y extraer
+áreas específicas (como encabezados, columnas, pie de página, etc.) mediante
+una interfaz gráfica basada en Matplotlib y Tkinter.
+Se utiliza pdfplumber para leer el PDF y fitz (PyMuPDF) para generar imágenes
+y realizar el recorte, junto con varios módulos propios para procesamiento adicional.
+"""
+
 import pdfplumber
 import matplotlib.pyplot as plt
 from matplotlib.widgets import RectangleSelector, Button, CheckButtons
 import fitz  # PyMuPDF
 import EliminarDatosInternosFisicos as EDIF
 import ExtraerTablasSinTextoPDF
+import InyectarXObjects
 from PIL import Image
 import numpy as np
 import io
@@ -12,159 +23,200 @@ import os
 import Config
 import re
 import unicodedata
+import tkinter as tk
+from tkinter import filedialog
 
 def limpiar_nombre_carpeta(nombre):
-    # Eliminar caracteres no permitidos en Windows
+    """
+    Limpia el nombre de una carpeta reemplazando caracteres no permitidos en Windows,
+    normalizando acentos y reemplazando la 'ñ'. Además, elimina espacios y puntos al final,
+    y evita usar nombres reservados.
+
+    :param nombre: Nombre original (string) a limpiar.
+    :return: Nombre limpio, limitado a 255 caracteres.
+    """
+    # Eliminar caracteres no permitidos
     nombre = re.sub(r'[\\/:*?"<>|]', '_', nombre)
     
     # Reemplazar ñ por n y quitar tildes
     nombre = unicodedata.normalize('NFKD', nombre)
-    nombre = ''.join(c for c in nombre if not unicodedata.combining(c))  # Quitar tildes
-    nombre = nombre.replace('ñ', 'n').replace('Ñ', 'N')  # Reemplazar ñ
+    nombre = ''.join(c for c in nombre if not unicodedata.combining(c))
+    nombre = nombre.replace('ñ', 'n').replace('Ñ', 'N')
 
-    # Quitar espacios y puntos al final
+    # Quitar espacios y puntos finales
     nombre = nombre.rstrip(" .")
 
     # Evitar nombres reservados de Windows
     nombres_reservados = {"CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", 
                           "COM5", "COM6", "COM7", "COM8", "COM9", "LPT1", "LPT2", "LPT3", 
                           "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"}
-    
     if nombre.upper() in nombres_reservados:
-        nombre += "_safe"  # Agregar sufijo para evitar conflictos
+        nombre += "_safe"
     
-    # Limitar la longitud a 255 caracteres
     return nombre[:255]
 
 
-# Ruta del PDF
-pdf_path = "PTAR 5068_F Tarifa Especial Aliados_V42_0325.pdf"  # Reemplaza esto con la ruta a tu archivo PDF
+# Inicializar la interfaz de Tkinter para seleccionar el PDF
+root = tk.Tk()
+root.withdraw()  # Oculta la ventana principal de Tkinter
+
+# Mostrar diálogo para seleccionar archivo PDF
+full_pdf_path = filedialog.askopenfilename(
+    title="Selecciona un archivo PDF",
+    filetypes=[("Archivos PDF", "*.pdf")]
+)
+
+# Verificar que se haya seleccionado un archivo, de lo contrario terminar
+if not full_pdf_path:
+    print("No se seleccionó ningún archivo. Terminando ejecución.")
+    exit()
+
+# Convertir la ruta a relativa desde el directorio del script
+script_dir = os.path.dirname(os.path.abspath(__file__))
+pdf_path = os.path.relpath(full_pdf_path, start=script_dir)
+
+# Limpiar el nombre para crear la carpeta destino y asignar folder_path
 nombre_limpio = limpiar_nombre_carpeta(pdf_path.split(".pdf")[0])
 print(nombre_limpio)
 folder_path = f"Curacion_{nombre_limpio}"
 
-# Variable global para almacenar las páginas donde se omite la colisión
-paginas_omitidas = set()
-checkbox_updating = False  # Bandera para evitar bucles infinitos
+# Variables globales para almacenar estados y coordenadas de selección
+paginas_omitidas = set()      # Páginas en las que se omite la colisión
+checkbox_updating = False     # Bandera para evitar bucles en actualización de checkbox
 
-# Variables para almacenar las coordenadas
+# Diccionario para almacenar los recuadros o áreas definidas
 rectangles = {
     'Encabezado': {
-        'left': {'coords': None, 'color': 'r'},   # Primera mitad
-        'right': {'coords': None, 'color': 'r'}   # Segunda mitad
+        'left': {'coords': None, 'color': 'r'},   # Primera mitad del encabezado
+        'right': {'coords': None, 'color': 'r'}   # Segunda mitad del encabezado
     },
     'Pie de página': {'coords': None, 'color': 'g'},
     'Columna izquierda': {'coords': None, 'color': 'b'},
     'Columna derecha': {'coords': None, 'color': 'm'},
-    'Excepción': {},  # Diccionario para excepciones por página
+    'Excepción': {},  # Áreas de excepción definidas por página
     
-    # Modo móvil
-    'Encabezado_movil': {},  # Similar a Pie de página
+    # Para el modo móvil
+    'Encabezado_movil': {},
     'Pie_de_pagina_movil': {'coords': None, 'color': 'g'},
-    'Columna_movil': {'coords': None, 'color': 'b'}  # Similar a Columna izquierda
+    'Columna_movil': {'coords': None, 'color': 'b'}
 }
 
-perimeter_issue_detected = False
+perimeter_issue_detected = False   # Bandera para marcar problemas con perímetros
 
-# Variables para la navegación entre páginas
-current_page_index = 0
-current_selector_key = 'Encabezado'
-crop_data = []  # Lista para guardar (pagina, coords)
+current_page_index = 0             # Página actual mostrada
+current_selector_key = 'Encabezado'  # Área a editar actualmente
+crop_data = []                     # Lista para almacenar (página, coordenadas) de recortes
+
 
 def pdfplumber_to_fitz(pdf):
-    pdf_bytes = io.BytesIO()
-    
-    pdf.stream.seek(0)  # Asegurar que estamos al inicio del archivo
-    pdf_bytes.write(pdf.stream.read())  # Guardar el contenido en memoria
-    pdf_bytes.seek(0)  # Volver al inicio para que fitz lo lea correctamente
+    """
+    Convierte un objeto PDF abierto con pdfplumber en un objeto BytesIO
+    compatible con fitz (PyMuPDF).
 
-    return pdf_bytes  # Retornar el PDF en memoria
+    :param pdf: Objeto PDF abierto con pdfplumber.
+    :return: BytesIO con el contenido del PDF.
+    """
+    pdf_bytes = io.BytesIO()
+    pdf.stream.seek(0)
+    pdf_bytes.write(pdf.stream.read())
+    pdf_bytes.seek(0)
+    return pdf_bytes
+
 
 def check_if_encabezado_half(coords):
+    """
+    Verifica si las coordenadas dadas corresponden a una de las mitades
+    del área de encabezado ya definida en el diccionario rectangles.
+
+    :param coords: Tuple (left, top, right, bottom) de la selección.
+    :return: Tuple (es_encabezado, is_left_half, is_right_half)
+             donde es_encabezado indica si es parte del encabezado y
+             is_left_half, is_right_half indican cuál mitad se definió.
+    """
     encabezado = rectangles.get("Encabezado", {})
-    
     if "left" in encabezado and "right" in encabezado:
         left_coords = encabezado["left"].get("coords")
         right_coords = encabezado["right"].get("coords")
-
         if left_coords and right_coords:
             left, top, right, bottom = coords
-
             is_left_half = (left_coords[0] == left and left_coords[1] == top and
                             left_coords[2] == right and left_coords[3] == bottom)
-
             is_right_half = (right_coords[0] == left and right_coords[1] == top and
                              right_coords[2] == right and right_coords[3] == bottom)
-
             return True, is_left_half, is_right_half
+    return False, False, False
 
-    return False, False, False  # No es encabezado
 
-# Función para recortar y agregar la región de una página al nuevo PDF
 def is_region_white(image, rect, threshold=250):
     """
-    Verifica si una región específica de la imagen es completamente blanca dentro de un umbral.
-    
-    :param image: Imagen completa en formato NumPy.
-    :param rect: Coordenadas (left, top, right, bottom) de la región a analizar.
-    :param threshold: Valor de umbral para considerar un píxel como blanco (0-255).
-    :return: True si toda la región es blanca, False en caso contrario.
+    Determina si la región definida por rect en la imagen es completamente blanca
+    (todos los píxeles mayores o iguales al umbral).
+
+    :param image: Imagen (array NumPy).
+    :param rect: Tuple (left, top, right, bottom) que define la región a analizar.
+    :param threshold: Valor de umbral (por defecto 250).
+    :return: True si la región es completamente blanca, False de lo contrario.
     """
-    left, top, right, bottom = map(int, rect)  # Asegurar que sean enteros
-    region = image[top:bottom, left:right]  # Extraer la región de la imagen
-    return np.all(region >= threshold)  # Verificar si todos los píxeles son blancos
+    left, top, right, bottom = map(int, rect)
+    region = image[top:bottom, left:right]
+    return np.all(region >= threshold)
+
 
 def is_pixel_in_exception(x, y, page_number, exceptions):
     """
-    Verifica si un píxel (x, y) está dentro de la región de excepción de la página.
+    Verifica si un píxel (x,y) se encuentra dentro de la región de excepción
+    para la página actual.
 
     :param x: Coordenada X del píxel.
     :param y: Coordenada Y del píxel.
-    :param page_number: Número de la página actual.
+    :param page_number: Número de la página.
     :param exceptions: Diccionario de excepciones por página.
-    :return: True si el píxel está dentro de una excepción, False en caso contrario.
+    :return: True si el píxel está en excepción, False en caso contrario.
     """
     if page_number in exceptions:
         ex_left, ex_top, ex_right, ex_bottom = exceptions[page_number]
-        return ex_left <= x < ex_right and ex_top <= y < ex_bottom  # Corrección en los límites
+        return ex_left <= x < ex_right and ex_top <= y < ex_bottom
     return False
+
 
 def check_perimeter(image, rect, page_number, exceptions):
     """
-    Verifica si el perímetro de una región en la imagen pasa por un píxel que no es blanco,
-    ignorando píxeles dentro de la excepción y excluyendo los bordes internos del encabezado 
-    si coincide exactamente con sus coordenadas.
+    Revisa si el perímetro de una región en la imagen contiene píxeles
+    que no sean blancos, ignorando aquellos que caen dentro de áreas de excepción.
+    Se excluyen los bordes internos si el rectángulo coincide con un encabezado.
+
+    :param image: Imagen (array NumPy).
+    :param rect: Tuple (left, top, right, bottom) de la región.
+    :param page_number: Número de la página.
+    :param exceptions: Diccionario de excepciones.
+    :return: True si se encuentra al menos un píxel no blanco en el perímetro,
+             False si el perímetro es completamente blanco o está en excepción.
     """
-    # Si la página está en paginas_omitidas, no verificamos colisión
+    # Omitir colisión si la página está en la lista de páginas omitidas
     if page_number in paginas_omitidas:
         if Config.DEBUG_PRINTS:
             print(f"[INFO] Omitiendo colisión en página {page_number}")
-        return False  # Se omite la colisión
-    
-    left, top, right, bottom = [int(i) if i >= 0 else 0 for i in rect]
-    left += 1
-    top += 1
-    right -= 1
-    bottom -= 1
+        return False
 
-    # Obtener coordenadas exactas del encabezado
+    # Ajustar coordenadas para excluir bordes
+    left, top, right, bottom = [int(i) if i >= 0 else 0 for i in rect]
+    left += 1; top += 1; right -= 1; bottom -= 1
+
+    # Obtener límites de áreas especiales
     encabezado_left = rectangles.get("Encabezado", {}).get("left", {}).get("coords")
     encabezado_right = rectangles.get("Encabezado", {}).get("right", {}).get("coords")
     pie_de_pagina_movil = rectangles.get("Pie_de_pagina_movil", {}).get("coords")
 
-    # Determinar si el rectángulo actual coincide con una mitad del encabezado
     is_left_encabezado = encabezado_left is not None and rect == encabezado_left
     is_right_encabezado = encabezado_right is not None and rect == encabezado_right
     is_pie_de_pagina_movil = pie_de_pagina_movil is not None and rect == pie_de_pagina_movil
 
-
-    # Extraer los bordes de la región
-    top_row = [(x, top) for x in range(left, right)]  # Siempre verificar el borde superior
-    bottom_row = [] if is_pie_de_pagina_movil else [(x, bottom + 1) for x in range(left, right)]  # Omitir si es Pie_de_pagina_movil
+    # Extraer píxeles en cada borde de la región
+    top_row = [(x, top) for x in range(left, right)]
+    bottom_row = [] if is_pie_de_pagina_movil else [(x, bottom + 1) for x in range(left, right)]
     left_col = [] if is_right_encabezado or is_pie_de_pagina_movil else [(left, y) for y in range(top, bottom)]
     right_col = [] if is_left_encabezado or is_pie_de_pagina_movil else [(right, y) for y in range(top, bottom)]
 
-    # Debugging: Ver qué bordes están siendo excluidos
     if Config.DEBUG_PRINTS:
         if is_left_encabezado:
             print(f"[DEBUG] Omitiendo borde derecho del encabezado izquierdo en {rect}")
@@ -173,87 +225,86 @@ def check_perimeter(image, rect, page_number, exceptions):
         if is_pie_de_pagina_movil:
             print(f"[DEBUG] Omitiendo bordes izquierdo, derecho e inferior de Pie_de_pagina_movil en {rect}")
 
-
-    # Verificar cada píxel en el perímetro
+    # Revisar cada píxel en el perímetro que no esté en excepción
     for x, y in top_row + bottom_row + left_col + right_col:
-        if not is_pixel_in_exception(x, y, page_number, exceptions):  # Ignorar si está en excepción
-            pixel_value = image[y, x]  # Obtener el valor del píxel
-
-            # Si la imagen tiene múltiples canales (ej. RGB), tomar solo el primer canal (escala de grises)
+        if not is_pixel_in_exception(x, y, page_number, exceptions):
+            pixel_value = image[y, x]
             if isinstance(pixel_value, np.ndarray):
-                pixel_value = pixel_value.mean()  # Convertir a un valor único tomando el promedio
-
-            if pixel_value != 255:  # Verificar si el píxel no es blanco
-                return True  # Se encontró un píxel no blanco en el perímetro
-
-    return False  # Todo el perímetro es blanco (o está en excepción)
+                pixel_value = pixel_value.mean()
+            if pixel_value != 255:
+                return True
+    return False
 
 
-def crop_and_add_to_pdf(page_number, coords,pdf_bytes):
-    global perimeter_issue_detected  # Permite modificar la variable global
+def crop_and_add_to_pdf(page_number, coords, pdf_bytes):
     """
-    Recorta una región de una página del PDF y la agrega a `crop_data` si no es completamente blanca.
-    
-    :param page_number: Número de la página en el PDF.
-    :param coords: Coordenadas (left, top, right, bottom) de la región a recortar.
+    Recorta una región de una página del PDF y, si la región no es completamente blanca
+    y su perímetro es válido, la agrega a la lista global crop_data para su posterior procesamiento.
+
+    :param page_number: Número de la página (0-indexed). Si es -1, se aplica a la última página.
+    :param coords: Tuple (left, top, right, bottom) que define la región a recortar.
+    :param pdf_bytes: Objeto BytesIO que contiene el PDF.
     """
+    global perimeter_issue_detected
     if not coords:
         return
 
-    # Cargar el PDF
+    # Abrir PDF en memoria con fitz
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     page = doc[page_number]
     
-    # Obtener la imagen de la página en la mejor calidad posible
-    pix = page.get_pixmap(matrix=fitz.Matrix(1, 1), alpha=False)  # Aumentar la resolución (2x)
+    # Obtener imagen de la página en buena calidad
+    pix = page.get_pixmap(matrix=fitz.Matrix(1, 1), alpha=False)
     img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-
-    # Convertir la imagen en un array NumPy en escala de grises
-    img_gray = img.convert("L")  # Convertir a escala de grises
-    img_np = np.array(img_gray)
-
-    # Convertir la imagen en un array NumPy
-    img_np = np.array(img)
+    
+    # Convertir a escala de grises
+    img_gray = img.convert("L")
+    img_np = np.array(img)  # También se usa la imagen en color para algunas validaciones
 
     exceptions = rectangles["Excepción"] if "Excepción" in rectangles else {}
     if Config.MOVIL:
         exceptions = rectangles["Encabezado_movil"] if "Encabezado_movil" in rectangles else {}
-        
 
-    # Verificar si la región recortada es completamente blanca
+    # Verificar si la región es completamente blanca
     if is_region_white(img_np, coords):
         if Config.DEBUG_PRINTS:
             print(f"[INFO] Página {page_number}, Región {coords} es completamente blanca. No se agrega.")
         return
 
-    # Verificar si el perímetro de la región contiene algún píxel no blanco fuera de la excepción
+    # Revisar el perímetro de la región
     if check_perimeter(img_np, coords, page_number, exceptions):
         if Config.DEBUG_PRINTS:
-            print(f"[ALERTA] Página {page_number}, Perímetro en {coords} pasa por un pixel que no es blanco (fuera de excepción).")
-        perimeter_issue_detected = True  # Se marca que hubo un problema con el perímetro
-
+            print(f"[ALERTA] Página {page_number}, Perímetro en {coords} contiene píxeles no blancos.")
+        perimeter_issue_detected = True
+        # Mostrar la región en cuestión para depuración
         fig, ax = plt.subplots(figsize=(10, 8))
         ax.imshow(img_gray, cmap="gray")
-        rect = plt.Rectangle((coords[0], coords[1]), coords[2] - coords[0], coords[3] - coords[1],
-                             linewidth=2, edgecolor='red', facecolor='none')
-        ax.add_patch(rect)
-        plt.title(f"Página {page_number}: Perímetro no completamente blanco (fuera de excepción)")
+        rect_disp = plt.Rectangle((coords[0], coords[1]), coords[2] - coords[0], coords[3] - coords[1],
+                                  linewidth=2, edgecolor='red', facecolor='none')
+        ax.add_patch(rect_disp)
+        plt.title(f"Página {page_number}: Perímetro problemático")
         plt.show()
-        return  # No agregamos la región a crop_data si hay problema con el perímetro
+        return
 
-
-    # Agregar la región a `crop_data`
+    # Agregar la región a la lista global crop_data
     crop_data.append((page_number, coords))
     if Config.DEBUG_PRINTS:
         print(f"[INFO] Región {coords} en página {page_number+1} agregada correctamente.")
 
- 
 
 def apply_crop_with_pikepdf(pdf_bytes):
+    """
+    Procesa el PDF eliminando elementos internos dentro de las áreas recortadas (usando EDIF)
+    y luego llama a otros módulos (InyectarXObjects, ExtraerTablasSinTextoPDF) para continuar el procesamiento.
+    Además, se actualizan y eliminan widgets y eventos de la interfaz gráfica para proceder.
+    
+    :param pdf_bytes: Objeto BytesIO con el PDF original.
+    """
     global buttons, fig, ax, ax_checkbox, ax_checkbox_omitir, axprev, bprev, axnext, bnext, axconfirm, bconfirm, toggle_selector, event_id
 
-    if not os.path.exists(folder_path):  # Verifica si la carpeta no existe
-        os.mkdir(folder_path)  # Crea la carpeta
+    # Crear la carpeta destino si no existe
+    if not os.path.exists(folder_path):
+        os.mkdir(folder_path)
         if Config.DEBUG_PRINTS:
             print(f"Carpeta '{folder_path}' creada con éxito.")
     else:
@@ -261,66 +312,37 @@ def apply_crop_with_pikepdf(pdf_bytes):
             print(f"La carpeta '{folder_path}' ya existe.")
 
     print("PDF GENERADO CON EXITO")
-    pdf_bytes = EDIF.eliminar_elementos_area(crop_data, pdf_bytes,folder_path)
-        
-    # if Config.DEBUG_PRINTS:
-    #     # Abrir el PDF en memoria con pdfplumber
-    #     with pdfplumber.open(pdf_bytes) as pdf:
-    #         for page in pdf.pages:
-    #             text = page.extract_text()
-    #             if Config.DEBUG_PRINTS:
-    #                 print(text)  # Aquí puedes procesar el texto sin guardar el PDF en disco
-    #             # plt.waitforbuttonpress()
-
-        # plt.close()
+    pdf_bytes = EDIF.eliminar_elementos_area(crop_data, pdf_bytes, folder_path)
     print("INICIANDO LA OBTENICION DE TABLAS...")
-    
-    # ax.axis("off")  # Desactivar los ejes
-    # for btn in buttons:
-    #     btn.ax.remove()  # Remueve el contenedor del botón
 
-    # SOLUCIÓN: Desactivar eventos ANTES de eliminar botones
+    # Desconectar y eliminar eventos de botones y checkboxes
     for btn in buttons:
-        btn.disconnect_events()  # Desconectar eventos de Matplotlib
+        btn.disconnect_events()
         btn.ax.remove()
     buttons.clear()
-
-    # SOLUCIÓN: Desactivar eventos en checkboxes y otros botones
     checkbox.disconnect_events()
     checkbox_omitir.disconnect_events()
     bconfirm.disconnect_events()
-    # bnext.disconnect_events()
-    # bprev.disconnect_events()
-
-    # bprev.on_clicked(ExtraerTablasSinTextoPDF.show_pdfplumber_tables_with_buttons)
-    # bnext.on_clicked(ExtraerTablasSinTextoPDF.show_pdfplumber_tables_with_buttons)
-
-    # Eliminar los checkboxes y botones restantes
     checkbox.ax.remove()
-    
     checkbox_omitir.ax.remove()
-    # axnext.remove()
-    # axprev.remove()
     bconfirm.ax.remove()
-
     toggle_selector.disconnect_events()
-
     fig.canvas.mpl_disconnect(event_id)
-    # toggle_selector = None  # Eliminar la referencia
 
-    # Limpiar completamente la figura
+    # Llamar a otros módulos para continuar procesamiento
+    pdf_xobjects = InyectarXObjects.main(pdf_bytes, folder_path)
+    ExtraerTablasSinTextoPDF.main(pdf_bytes, folder_path, fig, ax, bprev, bnext, pdf_xobjects, True)
 
-    # fig.clf()
-    # ax = fig.add_subplot(111)  # Se crea un nuevo eje en la figura
-    # fig.canvas.draw_idle()  # Redibujar la interfaz
-    ExtraerTablasSinTextoPDF.main(pdf_bytes,folder_path,fig, ax, bprev,bnext,True)  # Llamar a la función `main()`
 
-    
-    # return pdf_bytes  # Si necesitas usarlo en otro lugar, devuélvelo
-    
-# Función para dibujar los recuadros en la página
 def draw_rectangles(ax):
+    """
+    Dibuja en el eje (ax) los recuadros definidos en el diccionario rectangles.
+    Se utiliza para visualizar áreas como encabezados, columnas, pie de página y excepciones.
+    
+    :param ax: Objeto de eje de Matplotlib.
+    """
     for key, value in rectangles.items():
+        # Si la clave es 'Excepción' o 'Encabezado_movil', se dibujan para la página actual
         if key == 'Excepción' or key == "Encabezado_movil":
             for page, coords in value.items():
                 if page == current_page_index and coords:
@@ -332,28 +354,23 @@ def draw_rectangles(ax):
             if 'left' in value and 'right' in value:
                 left_coords = value['left'].get('coords')
                 right_coords = value['right'].get('coords')
-
-                # Obtener el límite derecho de la figura
                 fig_xmax = ax.get_xlim()[1]
-
                 if left_coords is not None:
                     rect_left = plt.Rectangle((left_coords[0], left_coords[1]),
-                                            left_coords[2] - left_coords[0],
-                                            left_coords[3] - left_coords[1],
-                                            linewidth=2, edgecolor='r', facecolor='none')
+                                              left_coords[2] - left_coords[0],
+                                              left_coords[3] - left_coords[1],
+                                              linewidth=2, edgecolor='r', facecolor='none')
                     ax.add_patch(rect_left)
-
                 if right_coords is not None:
                     rect_right = plt.Rectangle((right_coords[0], right_coords[1]),
-                                            fig_xmax - right_coords[0],  # Extender hasta el borde de la figura
-                                            right_coords[3] - right_coords[1],
-                                            linewidth=2, edgecolor='r', facecolor='none')
+                                               fig_xmax - right_coords[0],
+                                               right_coords[3] - right_coords[1],
+                                               linewidth=2, edgecolor='r', facecolor='none')
                     ax.add_patch(rect_right)
-
-                # Dibujar línea divisoria entre los dos encabezados si ambas mitades están definidas
+                # Dibujar línea divisoria entre ambas mitades
                 if left_coords is not None and right_coords is not None:
-                    ax.plot([left_coords[2], left_coords[2]], [left_coords[1], left_coords[3]], color='b', linestyle='--')
-        
+                    ax.plot([left_coords[2], left_coords[2]], [left_coords[1], left_coords[3]],
+                            color='b', linestyle='--')
         elif key in ['Columna izquierda', 'Columna derecha', 'Pie de página', 'Columna_movil']:
             coords = value['coords']
             color = value['color']
@@ -365,440 +382,353 @@ def draw_rectangles(ax):
             coords = value.get('coords')
             if coords:
                 rect = plt.Rectangle((coords[0], coords[1]), coords[2] - coords[0], coords[3] - coords[1],
-                                     linewidth=2, edgecolor='g', facecolor='none')  # Color verde para el pie de página móvil
+                                     linewidth=2, edgecolor='g', facecolor='none')
                 ax.add_patch(rect)
 
 
-# Función para mostrar la página actual
 def show_page():
+    """
+    Muestra la página actual del PDF en el eje de Matplotlib,
+    dibuja los recuadros definidos y actualiza el estado de los checkboxes.
+    """
     global current_page_index, checkbox_updating
     ax.clear()
     page = pdf.pages[current_page_index]
     im = page.to_image()
     ax.imshow(im.original)
     draw_rectangles(ax)
-    # Evitar que la actualización dispare `toggle_omitir_colision()`
     checkbox_updating = True
-    
     if checkbox_omitir.ax.figure is not None:
         if current_page_index in paginas_omitidas:
-            checkbox_omitir.set_active(0)  # Activarlo
+            checkbox_omitir.set_active(0)
         else:
-            checkbox_omitir.set_active(0)  # Activarlo primero (Matplotlib requiere esto)
-            checkbox_omitir.set_active(False)  # Luego desactivarlo
-
-    checkbox_updating = False  # Habilitar eventos nuevamente
-
+            checkbox_omitir.set_active(0)
+            checkbox_omitir.set_active(False)
+    checkbox_updating = False
     fig.canvas.draw_idle()
 
-# Función para manejar la selección de recuadros
+
 def onselect(eclick, erelease):
+    """
+    Función de callback para el RectangleSelector.
+    Captura las coordenadas de la selección y las asigna a la variable global
+    correspondiente según el área que se esté editando.
+    
+    :param eclick: Evento de clic (coordenadas iniciales).
+    :param erelease: Evento al soltar (coordenadas finales).
+    """
     global current_selector_key
     x1, y1 = eclick.xdata, eclick.ydata
     x2, y2 = erelease.xdata, erelease.ydata
     coords = (min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2))
     
-    fig_xmax = ax.get_xlim()[1]  # Límite derecho de la figura en Matplotlib
-    fig_ymin = ax.get_ylim()[0]  # Límite inferior de la figura (parte más baja)
+    fig_xmax = ax.get_xlim()[1]
+    fig_ymin = ax.get_ylim()[0]
     try:
         if current_selector_key == 'Excepción':
-            rectangles['Excepción'][current_page_index] = coords  # Guardar por página
+            rectangles['Excepción'][current_page_index] = coords
         elif current_selector_key == 'Encabezado_movil':
-            rectangles['Encabezado_movil'][current_page_index] = coords  # Guardar por página 
-
+            rectangles['Encabezado_movil'][current_page_index] = coords
         elif current_selector_key == 'Encabezado':
-            # Obtener el ancho total del PDF
-            # pdf_width = pdf.pages[current_page_index].width  # Ancho real del PDF
-
-
-            # Definir la primera mitad (como lo dibujó el usuario)
+            # Dividir el área en dos mitades: la izquierda se define según la selección y la derecha se extiende hasta el borde
             left_rect = (coords[0], coords[1], coords[2], coords[3])
-
-            # Definir la segunda mitad (desde el borde derecho del primero hasta el ancho total del PDF)
             right_rect = (coords[2], coords[1], fig_xmax, coords[3])
-
-            # Almacenar las coordenadas en la estructura correcta
             rectangles['Encabezado']['left']['coords'] = left_rect
             rectangles['Encabezado']['right']['coords'] = right_rect
-
             if Config.DEBUG_PRINTS:
-                print(f"Encabezado dividido en dos mitades: \n"
-                    f"Izquierda: {rectangles['Encabezado']['left']['coords']} \n"
-                    f"Derecha: {rectangles['Encabezado']['right']['coords']}")
-                
+                print(f"Encabezado dividido: Izquierda: {left_rect}, Derecha: {right_rect}")
         elif current_selector_key == 'Columna izquierda':
-            # Definir la columna izquierda (como lo dibujó el usuario)
             left_col_rect = (coords[0], coords[1], coords[2], coords[3])
-
-            # Definir la columna derecha con la misma altura que la izquierda
             right_col_rect = (coords[2], coords[1], fig_xmax, coords[3])
-
-            # Definir el pie de página (desde el límite inferior de la columna hasta el fondo de la figura)
             footer_rect = (ax.get_xlim()[0], coords[3], fig_xmax, fig_ymin)
-
             rectangles['Columna izquierda']['coords'] = left_col_rect
             rectangles['Columna derecha']['coords'] = right_col_rect
             rectangles['Pie de página']['coords'] = footer_rect
-
             if Config.DEBUG_PRINTS:
-                print(f"Columna izquierda definida en: {left_col_rect}")
-                print(f"Columna derecha generada automáticamente en: {right_col_rect}")
-                print(f"Pie de página generado automáticamente en: {footer_rect}")
-        
-        # elif current_selector_key == 'Pie_de_pagina_movil':
-        #     # Obtener la coordenada del clic antes de restablecer la vista
-        #     y_start = coords[1]
-
-        #     # Restablecer la vista de Matplotlib al tamaño original
-        #     ax.set_xlim(ax.dataLim.x0, ax.dataLim.x1)
-        #     ax.set_ylim(ax.dataLim.y0, ax.dataLim.y1)
-        #     fig.canvas.draw_idle()
-
-        #     # Obtener nuevamente los límites después de restablecer la vista
-        #     fig_xmax = ax.get_xlim()[1]  # Límite derecho
-        #     fig_ymin = ax.get_ylim()[1]  # Límite inferior
-
-        #     # Definir el rectángulo de Pie de página móvil con el tamaño correcto
-        #     footer_rect = (ax.get_xlim()[0], y_start, fig_xmax, fig_ymin)
-        #     rectangles['Pie_de_pagina_movil']['coords'] = footer_rect
-
-        #     if Config.DEBUG_PRINTS:
-        #         print(f"Pie de página móvil generado en: {footer_rect}")
+                print(f"Columna izquierda: {left_col_rect}, Columna derecha: {right_col_rect}, Pie de página: {footer_rect}")
         else:
             rectangles[current_selector_key]['coords'] = coords
             if Config.DEBUG_PRINTS:
                 print(f"{current_selector_key} definido en: {coords}")
-    except:
-        print("Boton no seleccionado")    
+    except Exception:
+        print("Botón no seleccionado")
     show_page()
 
-def on_click(event):
-    """ Función para manejar solo clics (sin arrastrar) en `Pie_de_pagina_movil`. """
-    global current_selector_key
 
+def on_click(event):
+    """
+    Callback para manejar clics individuales en la interfaz, utilizado para definir el área
+    de "Pie_de_pagina_movil" cuando se hace clic sin arrastrar.
+    
+    :param event: Evento de clic de Matplotlib.
+    """
+    global current_selector_key
     if current_selector_key == 'Pie_de_pagina_movil' and event.xdata is not None and event.ydata is not None:
-        # Restablecer la vista de Matplotlib al tamaño original
+        # Restablecer la vista original
         ax.set_xlim(ax.dataLim.x0, ax.dataLim.x1)
         ax.set_ylim(ax.dataLim.y0, ax.dataLim.y1)
         fig.canvas.draw_idle()
-
-        # Obtener los límites de `Columna_movil`
+        # Obtener límites de 'Columna_movil'
         columna_movil_coords = rectangles.get('Columna_movil', {}).get('coords')
-
         if columna_movil_coords:
-            col_left, _, col_right, col_bottom = columna_movil_coords  # Tomamos los límites izquierdo, derecho e inferior de la columna
+            col_left, _, col_right, col_bottom = columna_movil_coords
         else:
-            # Si `Columna_movil` no está definido, usar los límites de la figura como fallback
             col_left = ax.get_xlim()[0]
             col_right = ax.get_xlim()[1]
-            col_bottom = ax.get_ylim()[0]  # Fallback: usar el límite inferior de la figura
-
-        # Generar el rectángulo desde donde se hizo clic hasta los límites de `Columna_movil`
+            col_bottom = ax.get_ylim()[0]
+        # Generar el rectángulo desde el clic hasta los límites
         footer_rect = (col_left, event.ydata, col_right, col_bottom)
         rectangles['Pie_de_pagina_movil']['coords'] = footer_rect
-
         if Config.DEBUG_PRINTS:
-            print(f"Pie de página móvil generado en: {footer_rect}")
-
+            print(f"Pie de página móvil: {footer_rect}")
         current_selector_key = None
-        show_page()  # Actualizar la vista después de generar el rectángulo
+        show_page()
 
-# Función para cambiar directamente entre áreas
+
 def set_selector_key(area):
+    """
+    Actualiza la variable global current_selector_key para definir qué área se editará.
+    
+    :param area: String que identifica el área (ej. 'Encabezado', 'Columna izquierda', etc.).
+    """
     global current_selector_key
     current_selector_key = area
     if Config.DEBUG_PRINTS:
         print(f"Ahora editando: {current_selector_key}")
 
-# Funciones para la navegación de páginas
+
 def next_page(event):
+    """
+    Navega a la siguiente página del PDF.
+    
+    :param event: Evento del botón "Siguiente".
+    """
     global current_page_index
     if current_page_index < len(pdf.pages) - 1:
         current_page_index += 1
         show_page()
 
+
 def prev_page(event):
+    """
+    Navega a la página anterior del PDF.
+    
+    :param event: Evento del botón "Anterior".
+    """
     global current_page_index
     if current_page_index > 0:
         current_page_index -= 1
         show_page()
 
-# Función para manejar el estado del checkbox "Omitir colisión"
+
 def toggle_omitir_colision(event):
+    """
+    Alterna el estado (añadiendo o removiendo) de la omisión de colisión para la página actual.
+    
+    :param event: Evento del checkbox "Omitir colisión".
+    """
     global checkbox_updating
-
     if checkbox_updating:
-        return  # Evita que el evento se ejecute durante la actualización
-
+        return
     if current_page_index in paginas_omitidas:
         paginas_omitidas.remove(current_page_index)
     else:
         paginas_omitidas.add(current_page_index)
-
     if Config.DEBUG_PRINTS:
-        print(f"[INFO] Páginas con colisión omitida: {paginas_omitidas}")
+        print(f"[INFO] Páginas omitidas: {paginas_omitidas}")
 
-# Función para alternar entre los modos
+
 def toggle_modo_movil(event):
+    """
+    Alterna el modo móvil modificando la variable Config.MOVIL y actualiza los botones.
     
-    Config.MOVIL = not Config.MOVIL  # Alternar el estado
-
-    # Modificar la variable en Config.py
-    # Config.MOVIL = modo_movil
-
-    # Actualizar los botones
+    :param event: Evento del checkbox "Modo Móvil".
+    """
+    Config.MOVIL = not Config.MOVIL
     actualizar_botones()
-
     if Config.DEBUG_PRINTS:
         print(f"[INFO] Modo móvil: {Config.MOVIL}")
 
-# Función para actualizar los botones según el estado del checkbox
-def actualizar_botones():
-    global buttons, areas
 
-    # Eliminar los botones actuales
+def actualizar_botones():
+    """
+    Actualiza la interfaz de botones en función del modo (móvil o normal). Elimina los botones existentes
+    y crea nuevos botones con posiciones y colores adecuados para cada área.
+    """
+    global buttons, areas
     for btn in buttons:
         btn.ax.remove()
-
     buttons = []
-
     if Config.MOVIL:
-        # En modo móvil, solo se muestran "Encabezado", "Pie de página" y "Columna"
         areas = ['Encabezado_movil', 'Pie_de_pagina_movil', 'Columna_movil']
         colors = ['r', 'g', 'b']
-        positions = [0.3, 0.45, 0.6]  # Reposicionar para centrar
-
+        positions = [0.3, 0.45, 0.6]
     else:
-        # Modo normal, restaurar botones originales
         areas = ['Encabezado', 'Pie de página', 'Columna izquierda', 'Columna derecha', 'Excepción']
         colors = ['r', 'g', 'b', 'm', 'orange']
         positions = [0.26, 0.37, 0.48, 0.59, 0.70]
-
-    # Crear los nuevos botones según el modo actual
     for i, area in enumerate(areas):
         axarea = plt.axes([positions[i], 0.9, 0.1, 0.05])
         btn = Button(axarea, area, color=colors[i])
         btn.on_clicked(lambda event, a=area: set_selector_key(a))
         buttons.append(btn)
-
-    fig.canvas.draw_idle()  # Redibujar la interfaz
-
+    fig.canvas.draw_idle()
 
 
-# Función para procesar el PDF final
 def confirm_and_process(pdf_bytes, event=None):
-    global perimeter_issue_detected  # Usamos la variable global
+    """
+    Función de confirmación que valida las áreas definidas (verifica problemas en perímetro)
+    y luego procesa el PDF. Si se detectan problemas con el perímetro, no se genera el PDF final.
+    
+    :param pdf_bytes: BytesIO del PDF original.
+    :param event: Evento opcional (del botón Confirmar).
+    """
+    global perimeter_issue_detected
     print("[INFO] Detectando problemas en el perímetro...")
-
-    # Reiniciar el estado de `perimeter_issue_detected` antes de procesar
-    perimeter_issue_detected = False  
-
+    perimeter_issue_detected = False
     if Config.MOVIL:
         encabezado_movil_definido = (
-        0 in rectangles.get('Encabezado_movil', {}) and  # Verificar si existe en la página 0
-        rectangles['Encabezado_movil'].get(0) is not None  # Asegurar que no sea None
+            0 in rectangles.get('Encabezado_movil', {}) and
+            rectangles['Encabezado_movil'].get(0) is not None
         )
-        # Validación en modo móvil: verificar que Encabezado_movil, Pie_de_pagina_movil y Columna_movil estén definidos
         areas_movil_definidas = (
             encabezado_movil_definido and
-            # rectangles.get('Pie_de_pagina_movil', {}).get('coords') is not None and
             rectangles.get('Columna_movil', {}).get('coords') is not None
         )
-
         if areas_movil_definidas:
             process_pdf(pdf_bytes)
-            if Config.DEBUG_PRINTS:
-                print(f"[DEBUG] Valor de `perimeter_issue_detected` después de `process_pdf()`: {perimeter_issue_detected}")
-
             if perimeter_issue_detected:
-                print("[AVISO] Se detectaron problemas con el perímetro en al menos una región. No se generará el PDF.")
-                crop_data.clear()  # Limpiar la lista de datos de recorte
+                print("[AVISO] Problemas en el perímetro detectados. No se generará el PDF.")
+                crop_data.clear()
             else:
-                print("[INFO] No se detectaron problemas en el perímetro. Generando PDF...")
-                apply_crop_with_pikepdf(pdf_bytes)  # Solo se ejecuta si no hubo problemas en el perímetro
+                print("[INFO] Generando PDF en modo móvil...")
+                apply_crop_with_pikepdf(pdf_bytes)
         else:
-            print(rectangles.get('Encabezado_movil', {}).get(current_page_index) is not None)
-            print(rectangles.get('Pie_de_pagina_movil', {}).get('coords') is not None)
-            print(rectangles.get('Columna_movil', {}).get('coords') is not None)
-            print("[INFO] Modo móvil activo. No se requiere validar todas las áreas.")
-
+            print("[INFO] Modo móvil activo. No se requieren todas las áreas.")
     else:
-        # Nueva validación para el encabezado
         encabezado_definido = ('left' in rectangles['Encabezado'] and 'right' in rectangles['Encabezado'] and
                            rectangles['Encabezado']['left'].get('coords') is not None and
                            rectangles['Encabezado']['right'].get('coords') is not None)
-
-        # Modificar validación para verificar left y right del encabezado
         if (encabezado_definido and
             all(rect.get('coords') is not None for key, rect in rectangles.items() 
                 if key not in ['Encabezado', 'Excepción', 'Encabezado_movil', 'Pie_de_pagina_movil', 'Columna_movil'])):
-                    
             process_pdf(pdf_bytes)
-            if Config.DEBUG_PRINTS:
-                print(f"[DEBUG] Valor de perimeter_issue_detected después de process_pdf(): {perimeter_issue_detected}")
-
             if perimeter_issue_detected:
-                # if Config.DEBUG_PRINTS:
-                print("[AVISO] Se detectaron problemas con el perímetro en al menos una región. No se generará el PDF.")
-                crop_data.clear()  # Limpiar la lista de datos de recorte
+                print("[AVISO] Problemas en el perímetro detectados. No se generará el PDF.")
+                crop_data.clear()
             else:
-                # if Config.DEBUG_PRINTS:
-                print("[INFO] No se detectaron problemas en el perímetro. Generando PDF...")
-                apply_crop_with_pikepdf(pdf_bytes)  # Solo se ejecuta si no hubo problemas en el perímetro
-                # plt.close()
+                print("[INFO] Generando PDF...")
+                apply_crop_with_pikepdf(pdf_bytes)
         else:
-            # if Config.DEBUG_PRINTS:
-            print("Error: No todas las áreas obligatorias han sido definidas.")
-            crop_data.clear()  # Limpiar la lista de datos de recorte
+            print("Error: Áreas obligatorias no definidas.")
+            crop_data.clear()
 
-# Procesamiento del PDF
+
 def process_pdf(pdf_bytes):
-    new_doc = fitz.open()  # Documento de destino
-    original_pdf = fitz.open(stream=pdf_bytes, filetype="pdf")  # Abrir desde memoria
-
+    """
+    Procesa el PDF original, recortando las regiones definidas y agregándolas al nuevo documento.
+    Este procesamiento varía según si el modo es móvil o normal, aplicando recortes específicos
+    en cada caso.
+    
+    :param pdf_bytes: BytesIO del PDF original.
+    """
+    new_doc = fitz.open()  # Documento destino (no se usa directamente en este fragmento)
+    original_pdf = fitz.open(stream=pdf_bytes, filetype="pdf")
+    
     if Config.MOVIL:
-        # Obtener coordenadas de las áreas móviles
-        encabezado_movil_coords = rectangles.get('Encabezado_movil', {}).get(0)  # Solo en la página 0
+        encabezado_movil_coords = rectangles.get('Encabezado_movil', {}).get(0)
         columna_movil_coords = rectangles.get('Columna_movil', {}).get('coords')
         pie_pagina_movil_coords = rectangles.get('Pie_de_pagina_movil', {}).get('coords')
-
-        # `Encabezado_movil` como excepción
         crop_and_add_to_pdf(0, encabezado_movil_coords, pdf_bytes)
-
         for page_number in range(len(original_pdf)):
             if page_number in paginas_omitidas and columna_movil_coords and pie_pagina_movil_coords:
-                # **Si la página está marcada como omitida, enviar coordenadas especiales**
-                col_left, col_top, col_right, _ = columna_movil_coords  # Tomamos solo la parte superior
-                _, bottom_click, _, pie_bottom = pie_pagina_movil_coords  # Tomamos solo la parte inferior del pie de página
-
+                col_left, col_top, col_right, _ = columna_movil_coords
+                _, bottom_click, _, pie_bottom = pie_pagina_movil_coords
                 new_coords = (col_left, col_top, col_right, bottom_click)
                 crop_and_add_to_pdf(page_number, new_coords, pdf_bytes)
-
                 if Config.DEBUG_PRINTS:
-                    print(f"[INFO] Página {page_number} omitida en colisión, enviando: {new_coords}")
-
+                    print(f"[INFO] Página {page_number} omitida; recorte: {new_coords}")
             elif page_number == 0 and encabezado_movil_coords and columna_movil_coords:
-                # **Dividir `Columna_movil` en tres partes en la página donde está `Encabezado_movil`**
                 col_left, col_top, col_right, col_bottom = columna_movil_coords
                 enc_left, enc_top, enc_right, enc_bottom = encabezado_movil_coords
-
                 if col_bottom > enc_bottom:
-                    # Parte inferior de `Columna_movil`
                     crop_and_add_to_pdf(page_number, (col_left, enc_bottom, col_right, col_bottom), pdf_bytes)
             else:
-                # Para todas las demás páginas, `Columna_movil` se envía entera
                 if columna_movil_coords:
                     crop_and_add_to_pdf(page_number, columna_movil_coords, pdf_bytes)
-
-            # **Solo enviar `Pie_de_pagina_movil` en la última página**
             if page_number == len(original_pdf) - 1 and pie_pagina_movil_coords:
                 crop_and_add_to_pdf(page_number, pie_pagina_movil_coords, pdf_bytes)
-
     else:
-        # Verificar si el encabezado está definido con ambas mitades y sus coordenadas son válidas
         if ('left' in rectangles['Encabezado'] and 'right' in rectangles['Encabezado'] and
             rectangles['Encabezado']['left']['coords'] is not None and
             rectangles['Encabezado']['right']['coords'] is not None):
-
             left_coords = rectangles['Encabezado']['left']['coords']
             right_coords = rectangles['Encabezado']['right']['coords']
-
-            # Enviar ambas mitades a crop_and_add_to_pdf()
             crop_and_add_to_pdf(0, left_coords, pdf_bytes)
             crop_and_add_to_pdf(0, right_coords, pdf_bytes)
-
         else:
-            print("[ERROR] El encabezado no está completamente definido o sus coordenadas son inválidas.")
-
+            print("[ERROR] Encabezado no definido correctamente.")
         for page_number in range(len(original_pdf)):
             if page_number in rectangles['Excepción']:
                 exception_coords = rectangles['Excepción'][page_number]
-                
-                # Procesar la parte superior de las columnas (antes de la excepción)
                 for col in ['Columna izquierda', 'Columna derecha']:
                     col_coords = rectangles[col]['coords']
                     if col_coords:
                         left, top, right, bottom = col_coords
                         ex_left, ex_top, ex_right, ex_bottom = exception_coords
-
                         if top < ex_top:
-                            crop_and_add_to_pdf( page_number, (left, top, right, ex_top),pdf_bytes)
-
-                # Agregar la página de la excepción
-                crop_and_add_to_pdf( page_number, exception_coords,pdf_bytes)
-
-                # Procesar la parte inferior de las columnas (después de la excepción)
+                            crop_and_add_to_pdf(page_number, (left, top, right, ex_top), pdf_bytes)
+                crop_and_add_to_pdf(page_number, exception_coords, pdf_bytes)
                 for col in ['Columna izquierda', 'Columna derecha']:
                     col_coords = rectangles[col]['coords']
                     if col_coords:
                         left, top, right, bottom = col_coords
                         ex_left, ex_top, ex_right, ex_bottom = exception_coords
-
                         if bottom > ex_bottom:
-                            crop_and_add_to_pdf( page_number, (left, ex_bottom, right, bottom),pdf_bytes)
+                            crop_and_add_to_pdf(page_number, (left, ex_bottom, right, bottom), pdf_bytes)
             else:
-                crop_and_add_to_pdf( page_number, rectangles['Columna izquierda']['coords'],pdf_bytes)
-                crop_and_add_to_pdf( page_number, rectangles['Columna derecha']['coords'],pdf_bytes)
-        crop_and_add_to_pdf(-1, rectangles['Pie de página']['coords'],pdf_bytes)
-
-        # **Eliminado**: No agregamos el PDF completo al final
-        # crop_and_add_to_pdf(new_doc, original_pdf, -1, rectangles['Pie de página']['coords'])
-            
-        # new_doc.save("nuevo_documento.pdf")
-        new_doc.close()
-        # print("PDF generado exitosamente como 'nuevo_documento.pdf'")
-
-# Abrir el PDF de origen
-# pdf_origen = fitz.open(pdf_path)
-
-# Crear un nuevo PDF para el destino
-# pdf_destino = fitz.open()
+                crop_and_add_to_pdf(page_number, rectangles['Columna izquierda']['coords'], pdf_bytes)
+                crop_and_add_to_pdf(page_number, rectangles['Columna derecha']['coords'], pdf_bytes)
+        crop_and_add_to_pdf(-1, rectangles['Pie de página']['coords'], pdf_bytes)
+    new_doc.close()
 
 
-
-# Mostrar la primera página para definir áreas
+# Configuración de la interfaz gráfica con Matplotlib
 with pdfplumber.open(pdf_path) as pdf:
-    pdf_bytes = pdfplumber_to_fitz(pdf)  # Convertir pdfplumber a BytesIO para fitz    
-    # Asegurar que el stream está en la posición correcta antes de usarlo
+    pdf_bytes = pdfplumber_to_fitz(pdf)
     pdf_bytes.seek(0)
 
 fig, ax = plt.subplots(figsize=(14, 9))
 
-# Variable para rastrear el estado del checkbox
-modo_movil = False
-
-# Crear el checkbox para alternar el modo
-ax_checkbox = plt.axes([0.1, 0.9, 0.1, 0.05])  # Ubicación a la izquierda del botón "Encabezado"
+# Crear checkbox para "Modo Móvil"
+ax_checkbox = plt.axes([0.1, 0.9, 0.1, 0.05])
 checkbox = CheckButtons(ax_checkbox, ['Modo Móvil'], [False])
 checkbox.on_clicked(toggle_modo_movil)
 
-# Crear el checkbox en la interfaz, alineado con la navegación de páginas
-ax_checkbox_omitir = plt.axes([0.05, 0.05, 0.15, 0.05])  # Ubicación en la esquina inferior izquierda
+# Crear checkbox para "Omitir colisión"
+ax_checkbox_omitir = plt.axes([0.05, 0.05, 0.15, 0.05])
 checkbox_omitir = CheckButtons(ax_checkbox_omitir, ['Omitir colisión'], [False])
 checkbox_omitir.on_clicked(toggle_omitir_colision)
 
-# Botones de navegación (abajo)
-axprev = plt.axes([0.2, 0.05, 0.1, 0.05])  # Anterior (más a la izquierda)
-axnext = plt.axes([0.35, 0.05, 0.1, 0.05])  # Siguiente (centrado)
-axconfirm = plt.axes([0.7, 0.05, 0.15, 0.05])  # Confirmar (a la derecha)
-
+# Botones de navegación y confirmación
+axprev = plt.axes([0.2, 0.05, 0.1, 0.05])
+axnext = plt.axes([0.35, 0.05, 0.1, 0.05])
+axconfirm = plt.axes([0.7, 0.05, 0.15, 0.05])
 bprev = Button(axprev, 'Anterior')
 bprev.on_clicked(prev_page)
-
 bnext = Button(axnext, 'Siguiente')
 bnext.on_clicked(next_page)
-
 bconfirm = Button(axconfirm, 'Confirmar')
 bconfirm.on_clicked(functools.partial(confirm_and_process, pdf_bytes))
 
-# Inicializar los botones con la configuración normal
+# Inicializar botones con la configuración actual
 buttons = []
 actualizar_botones()
 
-# Habilitar la selección de rectángulos
+# Habilitar la selección de recuadros
 toggle_selector = RectangleSelector(
     ax, onselect, useblit=True,
-    button=[1],  # Botón izquierdo del mouse
+    button=[1],
     minspanx=5, minspany=5, spancoords='pixels', interactive=True
 )
 event_id = fig.canvas.mpl_connect("button_press_event", on_click)
