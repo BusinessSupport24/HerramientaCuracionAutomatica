@@ -37,18 +37,25 @@ Para ejecutar este proyecto, necesitas tener las siguientes dependencias instala
 
 - Python 3.x
 - Librerías de Python:
-  - `openai`
-  - `matplotlib`
-  - `pandas`
-  - `cv2` (OpenCV)
-  - `pdfplumber`
   - `beautifulsoup4`
-  - `pypandoc`
-  - `numpy`
-  - `re`
+  - `colorama`
   - `dateparser`
-  - `os`
-  - `requests`
+  - `markdownify`
+  - `matplotlib`
+  - `numpy`
+  - `openai`
+  - `opencv-python` (como `cv2`)
+  - `pdfplumber`
+  - `pikepdf`
+  - `pillow`
+  - `PyMuPDF`
+  - `pypandoc`
+  - `PyQt5`
+  - `PyQt5-Qt5`
+  - `PyQt5_sip`
+  - `PyQtWebEngine`
+  - `PyQtWebEngine-Qt5`
+  - `tabulate`
 
 Puedes instalar las dependencias necesarias ejecutando:
 
@@ -63,8 +70,7 @@ pip install -r requirements.txt
 1. **Clonar el repositorio**: Primero, clona el repositorio en tu máquina local.
 
    ```bash
-   git clone https://github.com/tuusuario/convertir-ofertas-claro-markdown.git
-   cd convertir-ofertas-claro-markdown
+   git clone https://github.com/BusinessSupport24/HerramientaCuracionAutomatica.git
    ```
 
 2. **Instalar las dependencias**: Si no lo has hecho aún, instala las dependencias necesarias:
@@ -73,31 +79,38 @@ pip install -r requirements.txt
    pip install -r requirements.txt
    ```
 
-3. **Configurar API Key de OpenAI**: Para enviar imágenes a la API de OpenAI, necesitas tener una clave de API de OpenAI configurada en tu entorno. Asegúrate de establecer la variable de entorno `OPENAI_API_KEY` con tu clave.
+3. **Configurar API Key de OpenAI**: Para enviar imágenes a la API de OpenAI, necesitas tener una clave de API de OpenAI configurada en tu entorno. Asegúrate de establecer la variable de entorno `OPENAI_API_KEY` con tu clave, en el archivo `EnviarImagenesAChatGPT.py`.
 
    ```bash
-   export OPENAI_API_KEY="tu-clave-api"
+      # Configuración de la clave API (debe configurarse la clave correspondiente)
+      os.environ["OPENAI_API_KEY"] = ""
+
+      # Crear el cliente de OpenAI. Se deben especificar organización y proyecto según configuración.
+      client = OpenAI(
+         organization="",
+         project=""
+      )
    ```
 
 ---
 
-## Uso
+## Ejecucion de los scripts
 
-1. **Ejecutar el script**: Para comenzar, ejecuta el script principal en tu terminal. El script abrirá una ventana donde podrás seleccionar el archivo PDF a convertir.
+1. **Ejecutar el script**: Para comenzar, ejecuta el script principal  en tu terminal. El script abrirá una ventana donde podrás seleccionar el archivo PDF a convertir.
 
    ```bash
-   python convertir_pdf_a_markdown.py
+   python CortarPDFEnColumnas.py
    ```
 
 2. **Delimitar áreas de interés**: Tras seleccionar el PDF, se abrirá una figura interactiva en `matplotlib` donde podrás delimitar las áreas del PDF (columnas, encabezados, pies de página) que deseas procesar. Haz clic y arrastra el ratón para crear los rectángulos de delimitación.
 
-3. **Verificación y edición de tablas**: Las tablas extraídas se mostrarán en formato HTML para su verificación. Asegúrate de que se han extraído correctamente.
+3. **Verificación y edición de tablas**: Las tablas extraídas se guardarán en formato HTML, en la carpeta `tablas_html` para su verificación. Asegúrate de que se han extraído correctamente.
 
-4. **Proceso de extracción de imágenes**: Las imágenes se enviarán automáticamente a la API de ChatGPT para extraer el texto.
+4. **Proceso de extracción de imágenes**: Las imágenes se enviarán automáticamente a la API de ChatGPT para extraer el texto, y estas se guardarán en la carpeta `imagenes_extraidas`, junto con sus respectivas respuestas.
 
-5. **Reemplazo de llaves**: Una vez el texto, tablas e imágenes estén procesados, las llaves de tabla e imagen se reemplazarán por su contenido correspondiente en formato Markdown.
+5. **Reemplazo de llaves**: Una vez el texto, tablas e imágenes estén procesados, las llaves unicas de tabla e imagen se reemplazarán por su contenido correspondiente en formato Markdown.
 
-6. **Revisión final**: El programa abrirá la carpeta con todos los recursos generados (imágenes, tablas HTML, PDFs) para su revisión.
+6. **Revisión final**: El programa abrirá la carpeta con todos los recursos generados (imágenes, tablas HTML, PDFs) para su respectiva revisión.
 
 ---
 
@@ -108,17 +121,119 @@ El proyecto tiene la siguiente estructura de directorios:
 ```
 convertir-ofertas-claro-markdown/
 │
-├── convertir_pdf_a_markdown.py       # Script principal para convertir el PDF a Markdown
-├── recursos/                         # Carpeta donde se almacenan los archivos generados
-│   ├── imagenes/                     # Carpeta con imágenes extraídas
-│   ├── tablas_html/                  # Carpeta con tablas en formato HTML
-│   └── pdfs_generados/               # Carpeta con PDFs generados
+├── README.md                         # Documentación del proyecto
 ├── requirements.txt                  # Archivo con las dependencias necesarias
-└── README.md                         # Este archivo
+│
+├── Config.py                         # Configuración global del proyecto
+│
+├── CortarPDFEnColumnas.py            # Divide el PDF en columnas
+├── DetectarCentroidesDeCeldas.py     # Detecta centroides de las celdas de tablas
+├── DibujarContornosCuadrados.py      # Dibuja contornos rectangulares sobre las celdas detectadas
+├── EliminarDatosInternosFisicos.py   # Limpia datos internos para verticalizacion y pdf sin texto
+├── EliminarYEscribirImagenes.py      # Manejo de imágenes dentro del pdf verticalizado
+├── EnviarImagenesAChatGPT.py         # Envío de imágenes al modelo de OpenAI
+├── Extraer_Imagenes.py               # Extracción de imágenes del PDF
+├── ExtraerEstructuraDeTabla.py       # Extrae estructura base de tablas basado en la imagen
+├── ExtraerTablasSinTextoPDF.py       # Extrae tablas sin texto directamente del PDF
+├── InyectarXObjects.py               # Inyecta objetos gráficos (XObjects) en el PDF
+├── ObtenerTextoPlano.py              # Obtiene texto plano desde el PDF
+├── OrganizarEncabezadoMD.py          # Organiza encabezado en archivo Markdown
+├── PasarTextoPlanoAMarkdown.py       # Convierte texto plano a Markdown
+├── ReemplazarImagenesDeMarkdown.py   # Reemplaza las llaves de las imágenes en el archivo Markdown
+├── ReemplazarTablasDeMarkdown.py     # Reemplaza las llaves de las tablas en el archivo Markdown
+├── RenderizarTablaHTML.py            # Renderiza las tablas extraidas del pdf a HTML
+├── VerificarTablaCerrada.py          # Verifica si una tabla está cerrada correctamente
 ```
+---
+## Uso
+
+A continuación se describe de forma resumida el flujo de trabajo para convertir un PDF a Markdown utilizando la interfaz gráfica:
+
+### 1. Interfaz y botones principales
+
+- **Visualización de la ventana de Matplotlib:**  
+  Al iniciar, se abre una ventana de Matplotlib que muestra distintos botones para interactuar.  
+
+
+- **Botón "Modo Móvil":**  
+  Este botón es el más importante y se debe presionar antes de definir cualquier límite, dependiendo de si la oferta a convertir es para móvil o no.
+
+- **Botones de navegación:**  
+  - **Anterior**
+  - **Siguiente**
+  - **Confirmar**
+
+- **Botones de delimitación:**  
+  Estos botones varían según el modo seleccionado.
+  
+  _[Se muestra una imagen de la ventana inicial modo normal]_  
+
+### 2. Modo Normal
+
+En este modo se cuentan con cinco botones, pero únicamente se utilizan tres para delimitar:
+
+- **Botón de Encabezado:**  
+  - Se utiliza para delimitar el encabezado.  
+  - Se debe dibujar un recuadro justo a la mitad horizontal del encabezado.  
+  - Se debe verificar con los botones de siguiente y anterior que el recuadro no se sobrepone (colisiona) con ningún texto, tabla o imagen en todas las páginas.  
+  _[Imagen de ejemplo de un encabezado en modo normal delimitado correctamente]_  
+
+- **Botón de Columna Izquierda:**  
+  - Se usa para delimitar las dos columnas y "verticalizar" el PDF, es decir, para que las columnas aparezcan en páginas separadas.  
+  - Al definir este límite, automáticamente se asignan los límites para la columna derecha y el pie de página.  
+  - Es fundamental evitar que el rectángulo delimite colisiones con otros elementos.  
+  _[Imagen de ejemplo de un rectángulo de columna izquierda correctamente posicionado]_  
+
+- **Botón de Excepción:**  
+  - Muy importante para los casos en que, en un PDF con columnas, algún elemento (párrafo, tabla o imagen) ocupa el espacio de dos columnas.  
+  - Se utiliza para encerrar ese elemento y asegurar que el reordenamiento de los contenidos sea correcto.  
+  _[Imagen de ejemplo de un rectángulo de excepción correctamente posicionado]_  
+
+> **Nota:**  
+> Los botones de **columna derecha** y **pie de página** no se deben usar de forma manual, ya que sus límites se definen automáticamente al posicionar el rectángulo de la columna izquierda.
+
+### 3. Modo Móvil
+
+En este modo se recomienda usar dos botones principales:
+
+_[Se muestra una imagen de la ventana inicial modo movil]_  
+
+- **Botón de Encabezado Móvil:**  
+  - Encierra únicamente el encabezado de información junto con su línea divisoria.  
+  _[Imagen de ejemplo del botón de encabezado móvil correctamente posicionado]_  
+
+- **Botón de Columna Móvil:**  
+  - Debe encerrar prácticamente toda la página.  
+  - **Importante:** En la mayoría de los casos, aunque el recuadro de la columna móvil pueda colisionar con algún elemento, el software no lo mostrará como error, pero se debe colocar con cuidado.  
+  _[Imagen de ejemplo de la columna móvil correctamente posicionada]_
+  _[Imagen de ejemplo de la columna móvil correctamente posicionada dos]_  
+
+#### Manejo de casos particulares en modo móvil
+
+- **Posicionamiento sin colisión imposible:**  
+  En algunas páginas puede ser imposible posicionar el recuadro de la columna móvil sin que colisione por completo con algún elemento.  
+  _[Imagen de ejemplo de un caso de colisión imposible]_  
+
+- **Botón "Omitir Colisión":**  
+  - Se utiliza junto con el botón de **Pie de Página** para casos donde el recuadro de la columna móvil colisiona.  
+  - El botón de pie de página delimita el área desde el punto de click hasta el límite inferior del recuadro de columna móvil.  
+  - **Importante:** No se debe usar el botón de "Pie de Página Móvil" sin haber posicionado primero el recuadro de columna móvil.  
+  _[Imagen de ejemplo del botón de pie de página móvil posicionado]_  
+
+### 4. Flujo General
+
+- **Posicionamiento de Rectángulos:**  
+  Los rectángulos se deben posicionar una única vez, y ese mismo posicionamiento se aplicará a todas las páginas. **La navegación (botones de siguiente y anterior)** sirve solo para verificar que el posicionamiento no colisione en ninguna página.
+
+- **Confirmación Final:**  
+  Una vez que todos los rectángulos estén correctamente posicionados, se presiona el botón de **Confirmar**.  
+  - El sistema verifica que en ninguna página exista colisión entre los elementos delimitados.  
+  - Si se detecta alguna colisión, se mostrará una nueva ventana con la página en la que se encuentra el problema.  
+    _[Imagen de ejemplo del software detectando una colisión]_  
+  - Si todo es correcto, el programa finaliza y genera la carpeta con el archivo Markdown, notificando al usuario la finalización del proceso.
+
 
 ---
-
 ## Contribuciones
 
 Si deseas contribuir a este proyecto, por favor sigue los siguientes pasos:
